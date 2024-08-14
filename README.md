@@ -58,7 +58,7 @@ cargo test
 ├── src
 │   ├── main.rs           # Entry point of the application
 │   ├── blockchain.rs     # Blockchain logic
-│   ├── block.rs    # Block logic 
+│   ├── block.rs          # Block logic 
 │   └── genesis.rs        # Genesis block config
 ├── Cargo.toml            # Rust package manager file
 └── README.md             # Project documentation
