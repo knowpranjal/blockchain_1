@@ -1,44 +1,38 @@
-use sha2::{Sha256, Digest};                             //library for hashing
-use std::time::{SystemTime, UNIX_EPOCH};                //calculate time for each block
+use std::time::{SystemTime, UNIX_EPOCH};
+use sha2::{Sha256, Digest};
 
-#[derive(Debug)]
-//a structure to store all the block's property
+#[derive(Debug, Clone)]
 pub struct Block {
-    pub index: u32,
+    pub index: u64,
     pub timestamp: u128,
-    pub data: String,
-    pub hash: String,
     pub previous_hash: String,
+    pub hash: String,
+    pub data: String,
 }
 
-
-//implementation of properties in block struct and creation of new blocks
 impl Block {
-    //function to produce new blocks
-    pub fn new(index: u32, data: String, previous_hash: String) -> Block {
+    pub fn new(index: u64, previous_hash: String, data: String) -> Block {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
-        let mut block = Block {
+        let hash = Block::calculate_hash(index, timestamp, &previous_hash, &data);
+
+        Block {
             index,
             timestamp,
+            previous_hash,
+            hash,
             data,
-            previous_hash: previous_hash.clone(),
-            hash: String::new(),
-        };
-        block.hash = block.calculate_hash();
-        block
+        }
     }
 
-
-    //calculating hash for the new block on the basis of its overall data
-    pub fn calculate_hash(&self) -> String {
+    pub fn calculate_hash(index: u64, timestamp: u128, previous_hash: &str, data: &str) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(format!(
-            "{}{}{}{}",
-            self.index, self.timestamp, self.data, self.previous_hash
-        ));
+        hasher.update(index.to_string());
+        hasher.update(timestamp.to_string());
+        hasher.update(previous_hash);
+        hasher.update(data);
         format!("{:x}", hasher.finalize())
     }
 }
@@ -46,52 +40,71 @@ impl Block {
 
 
 
-//test cases to verify the functionality of the block, will only run on cargo test command
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Sha256, Digest};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_block_creation() {
-        let index = 1;
-        let data = String::from("Test data");
-        let previous_hash = String::from("00000000000000000000000000000");
+        let data = String::from("Block data");
+        let previous_hash = String::from("00000000000000000000000000000000");
+        let block = Block::new(1, previous_hash.clone(), data.clone());
 
-        let block = Block::new(index, data.clone(), previous_hash.clone());
-
-        assert_eq!(block.index, index);
-        assert_eq!(block.data, data);
+        assert_eq!(block.index, 1);
         assert_eq!(block.previous_hash, previous_hash);
-        assert_ne!(block.hash, ""); // Hash should not be empty
+        assert_eq!(block.data, data);
+        assert!(!block.hash.is_empty());
     }
 
     #[test]
-    fn test_block_hash_calculation() {
+    fn test_hash_calculation() {
         let index = 1;
-        let data = String::from("Test data");
-        let previous_hash = String::from("00000000000000000000000000000");
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis();
+        let timestamp = 1630348284_u128;
+        let previous_hash = "00000000000000000000000000000000";
+        let data = "Block data";
+        let expected_hash = Block::calculate_hash(index, timestamp, previous_hash, data);
 
-        let block = Block::new(index, data.clone(), previous_hash.clone());
-
+        // Manually calculate the hash to check correctness
         let mut hasher = Sha256::new();
-        hasher.update(format!("{}{}{}{}", index, timestamp, data, previous_hash));
-        let expected_hash = format!("{:x}", hasher.finalize());
+        hasher.update(index.to_string());
+        hasher.update(timestamp.to_string());
+        hasher.update(previous_hash);
+        hasher.update(data);
+        let manual_hash = format!("{:x}", hasher.finalize());
 
-        assert_eq!(block.hash, expected_hash);
+        assert_eq!(expected_hash, manual_hash);
     }
 
     #[test]
-    fn test_blockchain_integrity() {
-        let first_block = Block::new(0, String::from("Genesis block"), String::from("00000000000000000000000000000"));
-        let second_block = Block::new(1, String::from("Second block"), first_block.hash.clone());
+    fn test_different_data_produces_different_hashes() {
+        let previous_hash = "00000000000000000000000000000000".to_string();
+        let block1 = Block::new(1, previous_hash.clone(), "Data 1".to_string());
+        let block2 = Block::new(2, previous_hash.clone(), "Data 2".to_string());
 
-        assert_eq!(second_block.previous_hash, first_block.hash);
-        assert_ne!(second_block.hash, first_block.hash); // Ensure hashes differ
+        assert_ne!(block1.hash, block2.hash);
+    }
+
+    #[test]
+    fn test_different_timestamps_produce_different_hashes() {
+        let previous_hash = "00000000000000000000000000000000".to_string();
+        let block1 = Block::new(1, previous_hash.clone(), "Same data".to_string());
+        
+        // Wait for 1 millisecond to ensure different timestamps
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        
+        let block2 = Block::new(1, previous_hash.clone(), "Same data".to_string());
+
+        assert_ne!(block1.hash, block2.hash);
+    }
+
+    #[test]
+    fn test_same_data_same_hash() {
+        let previous_hash = "00000000000000000000000000000000".to_string();
+        let block1 = Block::new(1, previous_hash.clone(), "Same data".to_string());
+        let block2 = Block::new(1, previous_hash.clone(), "Same data".to_string());
+
+        assert_eq!(block1.hash, block2.hash);
     }
 }
+

@@ -1,44 +1,37 @@
 use crate::block::Block;
-use crate::genesis::create_genesis_block;
 
-#[derive(Debug)]
 pub struct Blockchain {
-    pub chain: Vec<Block>,
+    pub blocks: Vec<Block>,
 }
 
 impl Blockchain {
-    // Create a new blockchain with the genesis block
     pub fn new() -> Blockchain {
-        let mut blockchain = Blockchain { chain: Vec::new() };
-        blockchain.add_genesis_block();
-        blockchain
+        let genesis_block = Block::new(0, String::from("0"), String::from("Genesis Block"));
+        Blockchain {
+            blocks: vec![genesis_block],
+        }
     }
 
-    // Add the genesis block to the blockchain
-    fn add_genesis_block(&mut self) {
-        let genesis_block = create_genesis_block(0, "Genesis block".to_string(), "000000000".to_string());
-        self.chain.push(genesis_block);
-    }
-
-    // Add a new block to the blockchain
     pub fn add_block(&mut self, data: String) {
-        let previous_hash = self.chain.last().unwrap().hash.clone();
-        let new_block = Block::new(self.chain.len() as u32, data, previous_hash);
-        self.chain.push(new_block);
+        let previous_block = self.blocks.last().unwrap().clone();
+        let new_block = Block::new(previous_block.index + 1, previous_block.hash, data);
+        self.blocks.push(new_block);
     }
 
-    // Validate the blockchain's integrity
     pub fn is_valid(&self) -> bool {
-        for i in 1..self.chain.len() {
-            let current_block = &self.chain[i];
-            let previous_block = &self.chain[i - 1];
+        for i in 1..self.blocks.len() {
+            let current_block = &self.blocks[i];
+            let previous_block = &self.blocks[i - 1];
 
-            // Validate the hash
-            if current_block.hash != current_block.calculate_hash() {
+            if current_block.hash != Block::calculate_hash(
+                current_block.index,
+                current_block.timestamp,
+                &current_block.previous_hash,
+                &current_block.data,
+            ) {
                 return false;
             }
 
-            // Validate the linkage
             if current_block.previous_hash != previous_block.hash {
                 return false;
             }
@@ -49,51 +42,81 @@ impl Blockchain {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    //adding a new block
+    #[test]
+    fn test_blockchain_creation() {
+        let blockchain = Blockchain::new();
+
+        assert_eq!(blockchain.blocks.len(), 1); // Genesis block should be the only block
+        assert_eq!(blockchain.blocks[0].data, "Genesis Block");
+        assert_eq!(blockchain.blocks[0].index, 0);
+    }
+
     #[test]
     fn test_add_block() {
-    let mut blockchain = Blockchain::new();
-    let data = String::from("Block data");
+        let mut blockchain = Blockchain::new();
+        blockchain.add_block(String::from("First block"));
+        blockchain.add_block(String::from("Second block"));
 
-    blockchain.add_block(data.clone());
+        assert_eq!(blockchain.blocks.len(), 3); // Genesis + 2 blocks
+        assert_eq!(blockchain.blocks[1].data, "First block");
+        assert_eq!(blockchain.blocks[2].data, "Second block");
 
-    let latest_block = blockchain.chain.last().unwrap();
-    assert_eq!(latest_block.data, data);
-    assert_ne!(latest_block.hash, "".to_string()); // Ensure hash is not empty
+        // Check if the indices are correct
+        assert_eq!(blockchain.blocks[1].index, 1);
+        assert_eq!(blockchain.blocks[2].index, 2);
+
+        // Check if the previous hash of the second block matches the hash of the first block
+        assert_eq!(blockchain.blocks[2].previous_hash, blockchain.blocks[1].hash);
     }
 
-    //validating the blockchain
     #[test]
-    fn test_valid_chain() {
-    let mut blockchain = Blockchain::new();
-    let data1 = String::from("Block 1 data");
-    let data2 = String::from("Block 2 data");
+    fn test_blockchain_validity() {
+        let mut blockchain = Blockchain::new();
+        blockchain.add_block(String::from("First block"));
+        blockchain.add_block(String::from("Second block"));
 
-    blockchain.add_block(data1.clone());
-    blockchain.add_block(data2.clone());
-
-    assert!(blockchain.is_valid());
+        assert!(blockchain.is_valid()); // Blockchain should be valid
     }
 
-    //validating hamperred chain
     #[test]
-    fn test_invalid_chain_tampered_hash() {
-    let mut blockchain = Blockchain::new();
-    let data1 = String::from("Block 1 data");
-    let data2 = String::from("Block 2 data");
+    fn test_blockchain_invalidity_due_to_modified_data() {
+        let mut blockchain = Blockchain::new();
+        blockchain.add_block(String::from("First block"));
+        blockchain.add_block(String::from("Second block"));
 
-    blockchain.add_block(data1.clone());
-    blockchain.add_block(data2.clone());
+        // Manually modify a block's data
+        blockchain.blocks[1].data = String::from("Tampered block");
 
-    // Tamper with the hash of the second block
-    let second_block = blockchain.chain.get_mut(1).unwrap();
-    second_block.hash = String::from("tampered_hash");
-
-    assert!(!blockchain.is_valid());
+        assert!(!blockchain.is_valid()); // Blockchain should be invalid
     }
 
+    #[test]
+    fn test_blockchain_invalidity_due_to_modified_hash() {
+        let mut blockchain = Blockchain::new();
+        blockchain.add_block(String::from("First block"));
+        blockchain.add_block(String::from("Second block"));
+
+        // Manually modify a block's hash
+        blockchain.blocks[1].hash = String::from("1234567890abcdef");
+
+        assert!(!blockchain.is_valid()); // Blockchain should be invalid
+    }
+
+    #[test]
+    fn test_blockchain_invalidity_due_to_modified_previous_hash() {
+        let mut blockchain = Blockchain::new();
+        blockchain.add_block(String::from("First block"));
+        blockchain.add_block(String::from("Second block"));
+
+        // Manually modify the previous hash of the second block
+        blockchain.blocks[2].previous_hash = String::from("abcdef1234567890");
+
+        assert!(!blockchain.is_valid()); // Blockchain should be invalid
+    }
 }
+
