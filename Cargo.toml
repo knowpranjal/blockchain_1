@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 sha2 = "0.10.8"
+rand = "0.8"  # For random number generation
+num-bigint = "0.4"  # For handling large integers
+num-traits = "0.2"  # For traits used with num-bigint

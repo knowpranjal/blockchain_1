@@ -1,7 +1,9 @@
 mod block;
 mod blockchain;
+mod mainchain;
 mod user;
 mod transaction;
+
 
 use crate::blockchain::Blockchain;
 use crate::user::{User, UserPool};
