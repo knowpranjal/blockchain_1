@@ -17,6 +17,7 @@ use std::str;
 fn handle_client(
     mut stream: TcpStream,
     blockchain: Arc<Mutex<Blockchain>>,
+    mainchain: Arc<Mutex<Blockchain>>,
     user_pool: Arc<Mutex<UserPool>>,
 ) {
     let mut buffer = [0; 512];
@@ -62,18 +63,27 @@ fn handle_client(
                         amount,
                         Arc::clone(&user_pool),
                         Arc::clone(&blockchain),
+                        Arc::clone(&mainchain),
                         &mut stream
                     );
 
                 } else if request.starts_with("PRINT_CHAIN") {
                     let chain = blockchain.lock().unwrap();
+                    let mainchain = mainchain.lock().unwrap();  // Access the mainchain
+                
                     let mut response = String::new();
+                    response.push_str("Transaction Blockchain:\n");
                     for block in &chain.blocks {
                         response.push_str(&format!("{:?}\n", block));
                     }
+                
+                    response.push_str("\nMainchain (Transaction Hashes):\n");
+                    for block in &mainchain.blocks {
+                        response.push_str(&format!("{:?}\n", block));
+                    }
+                
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
-                        return;
                     }
                 } else {
                     if let Err(e) = stream.write(b"Unknown command\n") {
@@ -101,6 +111,7 @@ fn parse_transaction_data(data: &str) -> (String, String, String) {
 
 fn main() {
     let blockchain = Arc::new(Mutex::new(Blockchain::new()));
+    let mainchain = Arc::new(Mutex::new(Blockchain::new()));
     let user_pool = Arc::new(Mutex::new(UserPool::new()));
 
     {
@@ -118,8 +129,9 @@ fn main() {
             Ok(stream) => {
                 let blockchain = Arc::clone(&blockchain);
                 let user_pool = Arc::clone(&user_pool);
+                let mainchain = Arc::clone(&mainchain);
                 thread::spawn(move || {
-                    handle_client(stream, blockchain, user_pool);
+                    handle_client(stream, blockchain, mainchain, user_pool);
                 });
             }
             Err(e) => eprintln!("Failed to accept connection: {}", e),

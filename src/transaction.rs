@@ -3,6 +3,16 @@ use crate::user::UserPool;
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;
+use sha2::{Sha256, Digest};
+
+
+fn generate_transaction_hash(sender: &str, receiver: &str, amount: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(sender);
+    hasher.update(receiver);
+    hasher.update(amount.to_string());
+    format!("{:x}", hasher.finalize())
+}
 
 // Handles the actual transaction logic
 pub fn process_transaction(
@@ -11,6 +21,7 @@ pub fn process_transaction(
     amount: u64,
     user_pool: Arc<Mutex<UserPool>>,
     blockchain: Arc<Mutex<Blockchain>>,
+    mainchain: Arc<Mutex<Blockchain>>,
     stream: &mut TcpStream,
 ) {
     let mut pool = user_pool.lock().unwrap();
@@ -52,6 +63,15 @@ pub fn process_transaction(
         eprintln!("Failed to send response: {}", e);
         return;
     }
+
+    let transaction_hash = generate_transaction_hash(sender_name, receiver_name, amount);
+
+    // Add the transaction hash to the mainchain
+    let mut mainchain = mainchain.lock().unwrap();
+    mainchain.add_block(transaction_hash.clone());
+
+    // Existing transaction print logic...
+    println!("Transaction hash added to mainchain: {}", transaction_hash);
 
     // Use the stored balances instead of re-borrowing `pool`
     println!(
