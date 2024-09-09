@@ -1,5 +1,6 @@
 use crate::blockchain::Blockchain;
 use crate::user::UserPool;
+use crate::pedersen::{create_pedersen_commitment, create_range_proof, verify_range_proof};
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;

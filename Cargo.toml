@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sha2 = "0.10.8"
-rand = "0.8"  # For random number generation
-num-bigint = "0.4"  # For handling large integers
-num-traits = "0.2"  # For traits used with num-bigint
+sha2 = "0.10.8"  # For basic hash generation
+rand = "0.8"  # For generating random numbers
+curve25519-dalek = "4.1.3"  # For elliptic curve operations
+bulletproofs = "5.0.0"
+merlin = "3.0.0"

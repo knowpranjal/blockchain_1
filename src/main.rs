@@ -3,6 +3,7 @@ mod blockchain;
 mod mainchain;
 mod user;
 mod transaction;
+mod pedersen;
 
 
 use crate::blockchain::Blockchain;
@@ -13,6 +14,7 @@ use std::io::{Read, Write};
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::str;
+
 
 fn handle_client(
     mut stream: TcpStream,
@@ -85,6 +87,7 @@ fn handle_client(
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
                     }
+
                 } else {
                     if let Err(e) = stream.write(b"Unknown command\n") {
                         eprintln!("Failed to send response: {}", e);
