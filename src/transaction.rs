@@ -1,6 +1,6 @@
 use crate::blockchain::Blockchain;
 use crate::user::UserPool;
-use crate::pedersen::{create_pedersen_commitment, create_range_proof, verify_range_proof};
+use crate::pedersen::{create_range_proof, verify_range_proof};
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;
@@ -43,15 +43,20 @@ pub fn process_transaction(
             return;
         }
 
-        // Deduct the amount from the sender and store the new balance
+        
         sender.wallet.balance -= amount;
         sender_new_balance = sender.wallet.balance;
+        // Deduct the amount from the sender and store the new balance
+        
     }
 
     // Now, get the receiver and add the amount
     {
         let receiver = pool.get_user(receiver_name).unwrap();
-        receiver.wallet.balance += amount;
+        let (proof, commitment) = create_range_proof(amount);
+        if verify_range_proof(proof, commitment) {
+            receiver.wallet.balance += amount;
+        }
         receiver_new_balance = receiver.wallet.balance;
     }
 

@@ -8,6 +8,7 @@ mod pedersen;
 
 use crate::blockchain::Blockchain;
 use crate::user::{User, UserPool};
+
 use crate::transaction::process_transaction;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
@@ -23,6 +24,7 @@ fn handle_client(
     user_pool: Arc<Mutex<UserPool>>,
 ) {
     let mut buffer = [0; 512];
+    
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => return, // Connection closed by client
@@ -59,6 +61,15 @@ fn handle_client(
                         }
                     };
 
+                    // let mut pool = user_pool.lock().unwrap();
+
+                    // let sender = pool.get_user(&sender_name).unwrap();
+                    // if sender.wallet.balance < amount {
+                    //     let (proof, commitment) = create_range_proof(amount);
+                    //     if verify_range_proof(proof, commitment) {
+
+                    //     }
+                    // }
                     process_transaction(
                         &sender_name,
                         &receiver_name,
