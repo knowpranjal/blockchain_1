@@ -1,15 +1,11 @@
-mod block;
-mod blockchain;
-mod mainchain;
-mod user;
-mod transaction;
-mod pedersen;
+mod core;
+mod chains;
+mod models;
 
+use crate::chains::blockchain::Blockchain;
+use crate::models::user::{User, UserPool};
+use crate::models::transaction::process_transaction;
 
-use crate::blockchain::Blockchain;
-use crate::user::{User, UserPool};
-
-use crate::transaction::process_transaction;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 use std::thread;

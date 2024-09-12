@@ -69,17 +69,17 @@ pub fn verify_range_proof(proof: RangeProof, commitment: CompressedRistretto) ->
     result.is_ok()
 }
 
-fn main() {
-    let amount = 100;
+// fn main() {
+//     let amount = 100;
 
-    // Create the Pedersen commitment and range proof
-    let (proof, commitment) = create_range_proof(amount);
+//     // Create the Pedersen commitment and range proof
+//     let (proof, commitment) = create_range_proof(amount);
 
-    // Output the commitment and proof
-    println!("Pedersen Commitment for {} tokens: {:?}", amount, commitment);
-    println!("Range Proof: {:?}", proof);
+//     // Output the commitment and proof
+//     println!("Pedersen Commitment for {} tokens: {:?}", amount, commitment);
+//     println!("Range Proof: {:?}", proof);
 
-    // Verify the range proof
-    let is_valid = verify_range_proof(proof, commitment);
-    println!("Is the proof valid? {}", is_valid);
-}
+//     // Verify the range proof
+//     let is_valid = verify_range_proof(proof, commitment);
+//     println!("Is the proof valid? {}", is_valid);
+// }

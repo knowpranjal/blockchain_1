@@ -1,4 +1,4 @@
-use crate::block::Block;
+use crate::core::block::Block;
 
 pub struct Blockchain {
     pub blocks: Vec<Block>,
@@ -18,7 +18,7 @@ impl Blockchain {
         self.blocks.push(new_block);
     }
 
-    pub fn is_valid(&self) -> bool {
+    pub fn _is_valid(&self) -> bool {
         for i in 1..self.blocks.len() {
             let current_block = &self.blocks[i];
             let previous_block = &self.blocks[i - 1];
@@ -80,7 +80,7 @@ mod tests {
         blockchain.add_block(String::from("First block"));
         blockchain.add_block(String::from("Second block"));
 
-        assert!(blockchain.is_valid()); // Blockchain should be valid
+        assert!(blockchain._is_valid()); // Blockchain should be valid
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
         // Manually modify a block's data
         blockchain.blocks[1].data = String::from("Tampered block");
 
-        assert!(!blockchain.is_valid()); // Blockchain should be invalid
+        assert!(!blockchain._is_valid()); // Blockchain should be invalid
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
         // Manually modify a block's hash
         blockchain.blocks[1].hash = String::from("1234567890abcdef");
 
-        assert!(!blockchain.is_valid()); // Blockchain should be invalid
+        assert!(!blockchain._is_valid()); // Blockchain should be invalid
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod tests {
         // Manually modify the previous hash of the second block
         blockchain.blocks[2].previous_hash = String::from("abcdef1234567890");
 
-        assert!(!blockchain.is_valid()); // Blockchain should be invalid
+        assert!(!blockchain._is_valid()); // Blockchain should be invalid
     }
 }
 

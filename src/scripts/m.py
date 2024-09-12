@@ -12,7 +12,7 @@ def send_command(command):
     return data.decode()
 
 # Add a block to the blockchain
-add_block_response = send_command("ADD_BLOCK Your block D2")
+add_block_response = send_command("ADD_BLOCK Your block D")
 print("Response from adding block:", add_block_response)
 
 # Send the transaction
