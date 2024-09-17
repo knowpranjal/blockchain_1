@@ -12,13 +12,29 @@ def send_command(command):
     return data.decode()
 
 # Add a block to the blockchain
-add_block_response = send_command("ADD_BLOCK Your block D")
-print("Response from adding block:", add_block_response)
+# add_block_response = send_command("ADD_BLOCK Your block D")
+# print("Response from adding block:", add_block_response)
+
+
+add_user_command = send_command("ADD_USER Nikhil 1000")
+print(add_user_command)
+
+add_user_command = send_command("ADD_USER Pranjal 1000")
+print(add_user_command)
 
 # Send the transaction
-transaction_response = send_command("TRANSACTION Pranjal Aditya 100")
-print("Response from adding block:", add_block_response)
+transaction_response = send_command("TRANSACTION Pranjal Nikhil 100")
+print("Response from adding block:", transaction_response)
+
+# Print the USer DAG
+user_DAG_response = send_command("PRINT_USER_DAG Pranjal")
+print("Response from adding block:", user_DAG_response)
+
+# Print the User2 DAG
+user_DAG_response = send_command("PRINT_USER_DAG Nikhil")
+print("Response from adding block:", user_DAG_response)
 
 # Print the entire blockchain
-print_chain_response = send_command("PRINT_CHAIN")
+print_chain_response = send_command("PRINT_DAG")
 print("Blockchain content:\n", print_chain_response)
+

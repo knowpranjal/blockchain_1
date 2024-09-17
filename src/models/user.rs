@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use crate::models::pki::KeyPairWrapper; // Import the PKI module
+use crate::DAGs::user_DAG::LocalDAG; // Import the local DAG
 
 #[derive(Debug, Clone)]
 pub struct Wallet {
@@ -9,13 +11,20 @@ pub struct Wallet {
 pub struct User {
     pub name: String,
     pub wallet: Wallet,
+    pub public_key: Vec<u8>,
+    pub local_dag: LocalDAG, // Add local DAG to the user
 }
 
 impl User {
     pub fn new(name: String, initial_balance: u64) -> User {
+        let key_pair_wrapper = KeyPairWrapper::generate().expect("Failed to generate key pair");
+        let public_key = key_pair_wrapper.public_key().to_vec();
+
         User {
             name,
             wallet: Wallet { balance: initial_balance },
+            public_key,
+            local_dag: LocalDAG::new(), // Initialize the local DAG
         }
     }
 
@@ -23,11 +32,18 @@ impl User {
         if self.wallet.balance < amount {
             return Err(format!("{} has insufficient balance.", self.name));
         }
+
         self.wallet.balance -= amount;
         receiver.wallet.balance += amount;
+
+        // Add transaction to both sender's and receiver's local DAGs
+        self.local_dag.add_transaction(self.name.clone(), receiver.name.clone(), amount)?;
+        receiver.local_dag.add_transaction(self.name.clone(), receiver.name.clone(), amount)?;
+
         Ok(())
     }
 }
+
 
 pub struct UserPool {
     users: HashMap<String, User>,

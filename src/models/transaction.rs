@@ -1,28 +1,17 @@
-use crate::chains::blockchain::Blockchain;
+use crate::DAGs::transaction_dag::{DAG, Transaction}; // Import the DAG and Transaction
 use crate::models::user::UserPool;
+use crate::DAGs::user_DAG::LocalDAG; // Import the local DAG
 use crate::models::pedersen::{create_range_proof, verify_range_proof};
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;
-use sha2::{Sha256, Digest};
 
-
-fn generate_transaction_hash(sender: &str, receiver: &str, amount: u64) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(sender);
-    hasher.update(receiver);
-    hasher.update(amount.to_string());
-    format!("{:x}", hasher.finalize())
-}
-
-// Handles the actual transaction logic
 pub fn process_transaction(
     sender_name: &str,
     receiver_name: &str,
     amount: u64,
     user_pool: Arc<Mutex<UserPool>>,
-    blockchain: Arc<Mutex<Blockchain>>,
-    mainchain: Arc<Mutex<Blockchain>>,
+    dag: Arc<Mutex<DAG>>,
     stream: &mut TcpStream,
 ) {
     let mut pool = user_pool.lock().unwrap();
@@ -32,10 +21,8 @@ pub fn process_transaction(
         return;
     }
 
-    let sender_new_balance;
-    let receiver_new_balance;
-
     // First, get the sender and perform necessary checks
+    let sender_new_balance;
     {
         let sender = pool.get_user(sender_name).unwrap();
         if sender.wallet.balance < amount {
@@ -43,43 +30,53 @@ pub fn process_transaction(
             return;
         }
 
-        
         sender.wallet.balance -= amount;
         sender_new_balance = sender.wallet.balance;
-        // Deduct the amount from the sender and store the new balance
-        
+
+        sender.local_dag.add_transaction(sender_name.to_string(), receiver_name.to_string(), amount).unwrap();
     }
 
     // Now, get the receiver and add the amount
+    let receiver_new_balance;
     {
         let receiver = pool.get_user(receiver_name).unwrap();
-        let (proof, commitment) = create_range_proof(amount);
-        if verify_range_proof(proof, commitment) {
-            receiver.wallet.balance += amount;
-        }
+        receiver.wallet.balance += amount;
         receiver_new_balance = receiver.wallet.balance;
+
+        receiver.local_dag.add_transaction(sender_name.to_string(), receiver_name.to_string(), amount).unwrap();
     }
 
-    // After the transaction, respond and update the blockchain
-    let mut chain = blockchain.lock().unwrap();
-    let transaction_info = format!("{} sent {} tokens to {}", sender_name, amount, receiver_name);
-    chain.add_block(transaction_info.clone());
+    // Update the local DAGs of both the sender and the receiver
+    // {
+    //     let sender = pool.get_user(sender_name).unwrap();
+    //     let receiver = pool.get_user(receiver_name).unwrap();
 
-    if let Err(e) = stream.write(b"Transaction successful\n") {
-        eprintln!("Failed to send response: {}", e);
-        return;
+        
+        
+    // }
+
+
+    // Create a new transaction and add it to the DAG
+    let mut dag = dag.lock().unwrap();
+    let prev_transactions = vec![]; // In this case, no previous transactions. Update as needed.
+    
+    let transaction = Transaction::new(
+        sender_name.to_string(),
+        receiver_name.to_string(),
+        amount,
+        prev_transactions,
+    );
+
+    match dag.add_transaction(transaction.clone()) {
+        Ok(_) => {
+            let _ = stream.write(b"Transaction successful\n");
+        }
+        Err(e) => {
+            let _ = stream.write(format!("Error: {}\n", e).as_bytes());
+        }
     }
 
-    let transaction_hash = generate_transaction_hash(sender_name, receiver_name, amount);
-
-    // Add the transaction hash to the mainchain
-    let mut mainchain = mainchain.lock().unwrap();
-    mainchain.add_block(transaction_hash.clone());
-
-    // Existing transaction print logic...
-    println!("Transaction hash added to mainchain: {}", transaction_hash);
-
-    // Use the stored balances instead of re-borrowing `pool`
+    // Existing transaction print logic
     println!(
         "{} sent {} tokens to {}. New balances -> {}: {}, {}: {}",
         sender_name, amount, receiver_name,
