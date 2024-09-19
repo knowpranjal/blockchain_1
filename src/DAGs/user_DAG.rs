@@ -73,6 +73,33 @@ impl LocalDAG {
         }
     }
 
+    pub fn print_dag_in_order(&self) {
+        // Find the first transaction (the one with no parent)
+        let mut current_transaction = self.transactions.values()
+            .find(|&tx| tx.parent_id.is_none());
+
+        // If we found the root transaction, start traversing
+        while let Some(transaction) = current_transaction {
+            // Print the current transaction details
+            println!(
+                "Transaction ID: {}, Sender: {}, Receiver: {}, Amount: {}, Parent: {:?}, Children: {:?}",
+                transaction.id,
+                transaction.sender,
+                transaction.receiver,
+                transaction.amount,
+                transaction.parent_id,
+                transaction.child_ids
+            );
+
+            // Move to the next transaction, which should be the first child (if any)
+            if !transaction.child_ids.is_empty() {
+                current_transaction = self.transactions.get(&transaction.child_ids[0]);
+            } else {
+                current_transaction = None;  // No more children, stop traversal
+            }
+        }
+    }
+
     pub fn get_transaction(&self, transaction_id: &str) -> Option<&Transaction> {
         self.transactions.get(transaction_id)
     }

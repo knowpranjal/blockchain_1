@@ -99,7 +99,7 @@ fn handle_client(
                     
                     if let Some(user) = pool.get_user(&user_name) {
                         // Call the print_dag method from LocalDAG
-                        user.local_dag.print_dag();
+                        user.local_dag.print_dag_in_order();
                         let _ = stream.write(format!("User {}'s DAG printed to the log\n", user_name).as_bytes());
                     } else {
                         let _ = stream.write(b"Error: User does not exist\n");
