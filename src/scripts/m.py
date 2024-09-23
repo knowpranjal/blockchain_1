@@ -1,7 +1,7 @@
 import socket
 
 def send_command(command):
-    host = '192.168.0.122'   # Ensure this matches the IP address of the device your rust node is live on
+    host = '192.168.0.175'   # Ensure this matches the IP address of the device your rust node is live on
     port = 8080  # Ensure this matches the port your node is listening on
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -22,9 +22,12 @@ print(add_user_command)
 add_user_command = send_command("ADD_USER Pranjal 1000")
 print(add_user_command)
 
-# Send the transaction
-transaction_response = send_command("TRANSACTION Pranjal Nikhil 100")
-print("Response from adding block:", transaction_response)
+add_user_command = send_command("ADD_USER Aditya 1000")
+print(add_user_command)
+
+# Send multiple transactions
+transaction_response = send_command("TRANSACTION Pranjal Nikhil 100 Aditya Nikhil 200 Nikhil Pranjal 300 Pranjal Nikhil 100 Aditya Nikhil 200 Nikhil Pranjal 300 Aditya Nikhil 200 Nikhil Pranjal 300 Pranjal Nikhil 100")
+print("Response from adding transactions:", transaction_response)
 
 # Print the USer DAG
 user_DAG_response = send_command("PRINT_USER_DAG Pranjal")

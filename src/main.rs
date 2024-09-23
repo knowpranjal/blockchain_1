@@ -6,7 +6,7 @@ mod DAGs;
 use crate::chains::blockchain::Blockchain;
 use crate::DAGs::transaction_dag::DAG;
 use crate::models::user::{User, UserPool};
-use crate::models::transaction::process_transaction;
+use crate::models::transaction::process_transactions;
 
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
@@ -37,22 +37,17 @@ fn handle_client(
 
                 if request.starts_with("TRANSACTION") {
                     let transaction_data = request.replace("TRANSACTION ", "");
-                    let (sender_name, receiver_name, amount_str) = parse_transaction_data(&transaction_data);
+                    let transactions = parse_transaction_data(&transaction_data);
 
-                    let amount: u64 = match amount_str.parse() {
-                        Ok(val) => val,
-                        Err(_) => {
-                            let _ = stream.write(b"Error: Invalid amount\n");
-                            continue;
-                        }
-                    };
+                    if transactions.is_empty() {
+                        let _ = stream.write(b"Error: Invalid transaction data\n");
+                        continue;
+                    }
 
-                    process_transaction(
-                        &sender_name,
-                        &receiver_name,
-                        amount,
+                    process_transactions(
+                        transactions,
                         Arc::clone(&user_pool),
-                        Arc::clone(&dag),  // Pass DAG instead of Blockchain
+                        Arc::clone(&dag),
                         &mut stream,
                     );
                 } else if request.starts_with("ADD_USER") {
@@ -86,9 +81,16 @@ fn handle_client(
                 } else if request.starts_with("PRINT_DAG") {
                     let dag = dag.lock().unwrap();
                     let mut response = String::new();
-                    response.push_str("Transaction DAG:\n");
-                    for transaction in dag.transactions.values() {
-                        response.push_str(&format!("{:?}\n", transaction));
+                    response.push_str("Blockchain DAG:\n");
+                    for block in dag.blocks.values() {
+                        response.push_str(&format!("Block ID: {}\n", block.id));
+                        response.push_str(&format!("  Parents: {:?}\n", block.parent_ids));
+                        response.push_str(&format!("  Children: {:?}\n", block.child_ids));
+                        response.push_str(&format!(
+                            "  Transactions: {:?}\n",
+                            block.transactions.iter().map(|tx| (tx.id, &tx.sender, &tx.receiver, tx.amount)).collect::<Vec<_>>()
+                        ));
+                        response.push_str("\n");
                     }
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
@@ -129,14 +131,28 @@ fn parse_add_user_data(data: &str) -> (String, String) {
     }
 }
 
-fn parse_transaction_data(data: &str) -> (String, String, String) {
+// Helper function to parse multiple transactions
+fn parse_transaction_data(data: &str) -> Vec<(String, String, u64)> {
     let parts: Vec<&str> = data.split_whitespace().collect();
-    if parts.len() == 3 {
-        (parts[0].to_string(), parts[1].to_string(), parts[2].to_string())
-    } else {
-        ("".to_string(), "".to_string(), "0".to_string()) // Return empty or default values in case of incorrect input
+    let mut transactions = Vec::new();
+
+    if parts.len() % 3 != 0 {
+        return transactions; // Return empty if data is invalid
     }
+
+    for chunk in parts.chunks(3) {
+        let sender = chunk[0].to_string();
+        let receiver = chunk[1].to_string();
+        let amount = match chunk[2].parse() {
+            Ok(val) => val,
+            Err(_) => continue, // Skip invalid transactions
+        };
+        transactions.push((sender, receiver, amount));
+    }
+
+    transactions
 }
+
 
 fn main() {
     let user_pool = Arc::new(Mutex::new(UserPool::new()));

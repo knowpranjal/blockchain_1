@@ -1,95 +1,140 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+/// Represents a transaction to be included in a block.
 #[derive(Debug, Clone)]
-pub struct Transaction {
-    pub id: String,                  // Unique identifier for the transaction
-    pub sender: String,              // Sender's public key
-    pub receiver: String,            // Receiver's public key
-    pub amount: u64,                 // Amount being transferred
-    pub timestamp: u64,              // Timestamp of the transaction
-    pub prev_transactions: Vec<String>, // References to previous transactions (transaction IDs)
+pub struct BlockTransaction {
+    pub id: u64,
+    pub sender: String,
+    pub receiver: String,
+    pub amount: u64,
 }
 
-impl Transaction {
-    // Create a new transaction
-    pub fn new(sender: String, receiver: String, amount: u64, prev_transactions: Vec<String>) -> Transaction {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let id = format!("{}{}{}{}", sender, receiver, amount, timestamp); // Simple ID for example purposes
-        Transaction {
+impl BlockTransaction {
+    pub fn new(sender: String, receiver: String, amount: u64) -> Self {
+        // Generate unique ID for each transaction
+        static mut TRANSACTION_COUNTER: u64 = 1;
+        let id;
+        unsafe {
+            id = TRANSACTION_COUNTER;
+            TRANSACTION_COUNTER += 1;
+        }
+        BlockTransaction {
             id,
             sender,
             receiver,
             amount,
-            timestamp,
-            prev_transactions,
         }
     }
 }
 
+/// Represents a block in the blockchain DAG.
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub id: String,
+    pub transactions: Vec<BlockTransaction>,
+    pub parent_ids: Vec<String>,
+    pub child_ids: Vec<String>,
+}
 
+/// Represents the blockchain as a DAG.
 #[derive(Debug)]
 pub struct DAG {
-    pub transactions: HashMap<String, Transaction>,  // Map of transaction IDs to transactions
+    pub blocks: HashMap<String, Block>, // Stores all blocks by their ID.
+    pub tips: HashSet<String>,          // Blocks without children (the tips of the DAG).
+    pub current_height: u64,            // Current height of the blockchain.
 }
 
 impl DAG {
-    // Create a new empty DAG
-    pub fn new() -> DAG {
+    /// Initializes a new blockchain with a genesis block.
+    pub fn new() -> Self {
+        let genesis_block = Block {
+            id: "1".to_string(),
+            transactions: Vec::new(),
+            parent_ids: Vec::new(),
+            child_ids: Vec::new(),
+        };
+
+        let mut blocks = HashMap::new();
+        blocks.insert("1".to_string(), genesis_block);
+
+        let mut tips = HashSet::new();
+        tips.insert("1".to_string());
+
         DAG {
-            transactions: HashMap::new(),
+            blocks,
+            tips,
+            current_height: 1,
         }
     }
 
-    // Add a new transaction to the DAG
-    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
-        // Check if the transaction creates a cycle
-        if self.creates_cycle(&transaction) {
-            return Err("Error: Adding this transaction would create a cycle".to_string());
+    /// Adds transactions to the blockchain, handling splitting logic.
+    pub fn add_transactions(&mut self, transactions: Vec<BlockTransaction>) -> Result<(), String> {
+        if transactions.is_empty() {
+            return Ok(()); // No transactions to add.
         }
 
-        // If valid, add the transaction to the DAG
-        self.transactions.insert(transaction.id.clone(), transaction);
+        // Collect current tips as parents for the new block(s).
+        let parent_ids: Vec<String> = self.tips.iter().cloned().collect();
+        self.tips.clear(); // Clear tips since we'll add new blocks.
+
+        // Increment the current height.
+        self.current_height += 1;
+        let height = self.current_height;
+
+        // Calculate the number of blocks needed.
+        let max_transactions_per_block = 5;
+        let num_blocks = (transactions.len() + max_transactions_per_block - 1) / max_transactions_per_block;
+
+        // Split transactions into chunks of up to max_transactions_per_block.
+        let mut new_block_ids = Vec::new();
+        for i in 0..num_blocks {
+            let start_index = i * max_transactions_per_block;
+            let end_index = usize::min(start_index + max_transactions_per_block, transactions.len());
+            let txns = transactions[start_index..end_index].to_vec();
+
+            // Generate block ID.
+            let block_id = if num_blocks == 1 {
+                // If only one block at this height, use height as ID.
+                height.to_string()
+            } else {
+                // Multiple blocks, use format "height.index".
+                format!("{}.{}", height, i + 1)
+            };
+
+            let block = Block {
+                id: block_id.clone(),
+                transactions: txns,
+                parent_ids: parent_ids.clone(),
+                child_ids: Vec::new(),
+            };
+
+            self.blocks.insert(block_id.clone(), block);
+            self.tips.insert(block_id.clone());
+            new_block_ids.push(block_id.clone());
+        }
+
+        // Update parent blocks to include all new blocks as their children.
+        for parent_id in &parent_ids {
+            if let Some(parent_block) = self.blocks.get_mut(parent_id) {
+                parent_block.child_ids.extend(new_block_ids.clone());
+            }
+        }
+
         Ok(())
     }
 
-    // Check if a transaction creates a cycle in the DAG
-    fn creates_cycle(&self, new_transaction: &Transaction) -> bool {
-        let mut visited = vec![new_transaction.id.clone()];
-        for prev_id in &new_transaction.prev_transactions {
-            if self.has_cycle(prev_id, &mut visited) {
-                return true;
-            }
+    /// Prints the entire blockchain for debugging purposes.
+    pub fn print_chain(&self) {
+        println!("Blockchain DAG:");
+        for block in self.blocks.values() {
+            println!("Block ID: {}", block.id);
+            println!("  Parents: {:?}", block.parent_ids);
+            println!("  Children: {:?}", block.child_ids);
+            println!(
+                "  Transactions: {:?}",
+                block.transactions.iter().map(|tx| (tx.id, &tx.sender, &tx.receiver, tx.amount)).collect::<Vec<_>>()
+            );
+            println!("");
         }
-        false
-    }
-
-    // Recursive helper function to check if there's a cycle
-    fn has_cycle(&self, transaction_id: &String, visited: &mut Vec<String>) -> bool {
-        // If we've already visited this transaction, there's a cycle
-        if visited.contains(transaction_id) {
-            return true;
-        }
-
-        // Mark the transaction as visited
-        visited.push(transaction_id.clone());
-
-        // Get the transaction and check its previous transactions
-        if let Some(transaction) = self.transactions.get(transaction_id) {
-            for prev_id in &transaction.prev_transactions {
-                if self.has_cycle(prev_id, visited) {
-                    return true;
-                }
-            }
-        }
-
-        // If no cycle found, remove the transaction from the visited list and return false
-        visited.retain(|id| id != transaction_id);
-        false
-    }
-
-    // Get a transaction by its ID
-    pub fn get_transaction(&self, id: &String) -> Option<&Transaction> {
-        self.transactions.get(id)
     }
 }
