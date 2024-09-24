@@ -12,39 +12,31 @@ pub struct User {
     pub name: String,
     pub wallet: Wallet,
     pub public_key: Vec<u8>,
-    pub local_dag: LocalDAG, // Add local DAG to the user
+    pub key_pair_wrapper: KeyPairWrapper, // Include the key pair wrapper
+    pub local_dag: LocalDAG,              // Add local DAG to the user
 }
 
 impl User {
     pub fn new(name: String, initial_balance: u64) -> User {
-        let key_pair_wrapper = KeyPairWrapper::generate().expect("Failed to generate key pair");
-        let public_key = key_pair_wrapper.public_key().to_vec();
+        let key_pair_wrapper =
+            KeyPairWrapper::generate().expect("Failed to generate key pair");
+        let public_key = key_pair_wrapper
+            .public_key()
+            .expect("Failed to get public key");
 
         User {
             name,
-            wallet: Wallet { balance: initial_balance },
+            wallet: Wallet {
+                balance: initial_balance,
+            },
             public_key,
+            key_pair_wrapper,
             local_dag: LocalDAG::new(), // Initialize the local DAG
         }
     }
-
-    pub fn send_tokens(&mut self, amount: u64, receiver: &mut User) -> Result<(), String> {
-        if self.wallet.balance < amount {
-            return Err(format!("{} has insufficient balance.", self.name));
-        }
-
-        self.wallet.balance -= amount;
-        receiver.wallet.balance += amount;
-
-        // Add transaction to both sender's and receiver's local DAGs
-        self.local_dag.add_transaction(self.name.clone(), receiver.name.clone(), amount)?;
-        receiver.local_dag.add_transaction(self.name.clone(), receiver.name.clone(), amount)?;
-
-        Ok(())
-    }
 }
 
-
+#[derive(Debug)]
 pub struct UserPool {
     users: HashMap<String, User>,
 }
@@ -60,11 +52,25 @@ impl UserPool {
         self.users.insert(user.name.clone(), user);
     }
 
-    pub fn get_user(&mut self, name: &str) -> Option<&mut User> {
+    pub fn get_user(&self, name: &str) -> Option<&User> {
+        self.users.get(name)
+    }
+
+    pub fn get_user_mut(&mut self, name: &str) -> Option<&mut User> {
         self.users.get_mut(name)
     }
 
     pub fn user_exists(&self, name: &str) -> bool {
         self.users.contains_key(name)
+    }
+
+    /// Provides read-only access to all users
+    pub fn get_all_users(&self) -> &HashMap<String, User> {
+        &self.users
+    }
+
+    /// Retrieves a user's public key
+    pub fn get_user_public_key(&self, name: &str) -> Option<Vec<u8>> {
+        self.users.get(name).map(|user| user.public_key.clone())
     }
 }

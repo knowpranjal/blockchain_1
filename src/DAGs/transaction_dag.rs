@@ -1,4 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use crate::models::user::UserPool;
+use crate::models::pki::KeyPairWrapper;
 
 /// Represents a transaction to be included in a block.
 #[derive(Debug, Clone)]
@@ -7,10 +10,18 @@ pub struct BlockTransaction {
     pub sender: String,
     pub receiver: String,
     pub amount: u64,
+    pub signature: Vec<u8>, // New field: Signature
+    pub timestamp: u64,     // New field: Timestamp
 }
 
 impl BlockTransaction {
-    pub fn new(sender: String, receiver: String, amount: u64) -> Self {
+    pub fn new(
+        sender: String,
+        receiver: String,
+        amount: u64,
+        signature: Vec<u8>,
+        timestamp: u64,
+    ) -> Self {
         // Generate unique ID for each transaction
         static mut TRANSACTION_COUNTER: u64 = 1;
         let id;
@@ -23,6 +34,8 @@ impl BlockTransaction {
             sender,
             receiver,
             amount,
+            signature,
+            timestamp,
         }
     }
 }
@@ -42,11 +55,12 @@ pub struct DAG {
     pub blocks: HashMap<String, Block>, // Stores all blocks by their ID.
     pub tips: HashSet<String>,          // Blocks without children (the tips of the DAG).
     pub current_height: u64,            // Current height of the blockchain.
+    pub user_pool: Arc<Mutex<UserPool>>, // Reference to the user pool
 }
 
 impl DAG {
     /// Initializes a new blockchain with a genesis block.
-    pub fn new() -> Self {
+    pub fn new(user_pool: Arc<Mutex<UserPool>>) -> Self {
         let genesis_block = Block {
             id: "1".to_string(),
             transactions: Vec::new(),
@@ -64,13 +78,42 @@ impl DAG {
             blocks,
             tips,
             current_height: 1,
+            user_pool,
         }
+    }
+
+    /// Retrieves a user's public key
+    fn get_user_public_key(&self, username: &str) -> Option<Vec<u8>> {
+        let pool = self.user_pool.lock().unwrap();
+        pool.get_user_public_key(username)
     }
 
     /// Adds transactions to the blockchain, handling splitting logic.
     pub fn add_transactions(&mut self, transactions: Vec<BlockTransaction>) -> Result<(), String> {
         if transactions.is_empty() {
             return Ok(()); // No transactions to add.
+        }
+
+        // Verify signatures of all transactions
+        for tx in &transactions {
+            // Reconstruct the message
+            let message = format!(
+                "{}:{}:{}:{}",
+                tx.sender, tx.receiver, tx.amount, tx.timestamp
+            );
+
+            // Retrieve the sender's public key
+            let sender_public_key = self
+                .get_user_public_key(&tx.sender)
+                .ok_or(format!("Sender public key not found for {}", tx.sender))?;
+
+            // Verify the signature
+            KeyPairWrapper::verify(
+                &sender_public_key,
+                message.as_bytes(),
+                &tx.signature,
+            )
+            .map_err(|e| format!("Signature verification failed for transaction {}: {:?}", tx.id, e))?;
         }
 
         // Collect current tips as parents for the new block(s).
@@ -83,7 +126,8 @@ impl DAG {
 
         // Calculate the number of blocks needed.
         let max_transactions_per_block = 5;
-        let num_blocks = (transactions.len() + max_transactions_per_block - 1) / max_transactions_per_block;
+        let num_blocks =
+            (transactions.len() + max_transactions_per_block - 1) / max_transactions_per_block;
 
         // Split transactions into chunks of up to max_transactions_per_block.
         let mut new_block_ids = Vec::new();
@@ -130,10 +174,13 @@ impl DAG {
             println!("Block ID: {}", block.id);
             println!("  Parents: {:?}", block.parent_ids);
             println!("  Children: {:?}", block.child_ids);
-            println!(
-                "  Transactions: {:?}",
-                block.transactions.iter().map(|tx| (tx.id, &tx.sender, &tx.receiver, tx.amount)).collect::<Vec<_>>()
-            );
+            println!("  Transactions:");
+            for tx in &block.transactions {
+                println!(
+                    "    Transaction ID: {}, Sender: {}, Receiver: {}, Amount: {}, Timestamp: {}, Signature: {:?}",
+                    tx.id, tx.sender, tx.receiver, tx.amount, tx.timestamp, tx.signature
+                );
+            }
             println!("");
         }
     }

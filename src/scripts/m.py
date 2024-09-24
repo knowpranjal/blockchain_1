@@ -16,6 +16,7 @@ def send_command(command):
 # print("Response from adding block:", add_block_response)
 
 
+
 add_user_command = send_command("ADD_USER Nikhil 1000")
 print(add_user_command)
 
@@ -26,7 +27,7 @@ add_user_command = send_command("ADD_USER Aditya 1000")
 print(add_user_command)
 
 # Send multiple transactions
-transaction_response = send_command("TRANSACTION Pranjal Nikhil 100 Aditya Nikhil 200 Nikhil Pranjal 300 Pranjal Nikhil 100 Aditya Nikhil 200 Nikhil Pranjal 300 Aditya Nikhil 200 Nikhil Pranjal 300 Pranjal Nikhil 100")
+transaction_response = send_command("TRANSACTION Pranjal Nikhil 100 Nikhil Aditya 200 Aditya Pranjal 300")
 print("Response from adding transactions:", transaction_response)
 
 # Print the USer DAG

@@ -20,7 +20,7 @@ fn handle_client(
     user_pool: Arc<Mutex<UserPool>>,
     dag: Arc<Mutex<DAG>>, // Add DAG parameter
 ) {
-    let mut buffer = [0; 512];
+    let mut buffer = [0; 4096];
 
     loop {
         match stream.read(&mut buffer) {
@@ -50,6 +50,8 @@ fn handle_client(
                         Arc::clone(&dag),
                         &mut stream,
                     );
+
+                    print!("halla bol");
                 } else if request.starts_with("ADD_USER") {
                     let user_data = request.replace("ADD_USER ", "");
                     let (name, balance_str) = parse_add_user_data(&user_data);
@@ -79,6 +81,7 @@ fn handle_client(
                         );
                     }
                 } else if request.starts_with("PRINT_DAG") {
+
                     let dag = dag.lock().unwrap();
                     let mut response = String::new();
                     response.push_str("Blockchain DAG:\n");
@@ -95,9 +98,11 @@ fn handle_client(
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
                     }
+
                 } else if request.starts_with("PRINT_USER_DAG") {
+                    println!("Command received");
                     let user_name = request.replace("PRINT_USER_DAG ", "").trim().to_string();
-                    let mut pool = user_pool.lock().unwrap();
+                    let pool = user_pool.lock().unwrap();
                     
                     if let Some(user) = pool.get_user(&user_name) {
                         // Call the print_dag method from LocalDAG
@@ -156,7 +161,7 @@ fn parse_transaction_data(data: &str) -> Vec<(String, String, u64)> {
 
 fn main() {
     let user_pool = Arc::new(Mutex::new(UserPool::new()));
-    let dag = Arc::new(Mutex::new(DAG::new()));  // Initialize DAG
+    let dag = Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))));  // Initialize DAG
 
     // {
     //     // Initialize the user pool with some users
@@ -182,4 +187,3 @@ fn main() {
         }
     }
 }
-
