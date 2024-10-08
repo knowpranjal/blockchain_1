@@ -6,29 +6,23 @@ use crate::models::pki::KeyPairWrapper;
 /// Represents a transaction to be included in a block.
 #[derive(Debug, Clone)]
 pub struct BlockTransaction {
-    pub id: u64,
+    pub id: String, // Change from u64 to String
     pub sender: String,
     pub receiver: String,
     pub amount: u64,
-    pub signature: Vec<u8>, // New field: Signature
-    pub timestamp: u64,     // New field: Timestamp
+    pub signature: Vec<u8>, // Signature
+    pub timestamp: u64,     // Timestamp
 }
 
 impl BlockTransaction {
     pub fn new(
+        id: String, // Use the provided transaction ID
         sender: String,
         receiver: String,
         amount: u64,
         signature: Vec<u8>,
         timestamp: u64,
     ) -> Self {
-        // Generate unique ID for each transaction
-        static mut TRANSACTION_COUNTER: u64 = 1;
-        let id;
-        unsafe {
-            id = TRANSACTION_COUNTER;
-            TRANSACTION_COUNTER += 1;
-        }
         BlockTransaction {
             id,
             sender,
@@ -39,6 +33,7 @@ impl BlockTransaction {
         }
     }
 }
+
 
 /// Represents a block in the blockchain DAG.
 #[derive(Debug, Clone)]
@@ -82,6 +77,17 @@ impl DAG {
         }
     }
 
+    pub fn get_transaction(&self, transaction_id: &str) -> Option<BlockTransaction> {
+        for block in self.blocks.values() {
+            for tx in &block.transactions {
+                if tx.id == transaction_id {
+                    return Some(tx.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Retrieves a user's public key
     fn get_user_public_key(&self, username: &str) -> Option<Vec<u8>> {
         let pool = self.user_pool.lock().unwrap();
@@ -95,11 +101,12 @@ impl DAG {
         }
 
         // Verify signatures of all transactions
+        // Verify signatures of all transactions
         for tx in &transactions {
-            // Reconstruct the message
+            // Reconstruct the message, including the transaction ID
             let message = format!(
-                "{}:{}:{}:{}",
-                tx.sender, tx.receiver, tx.amount, tx.timestamp
+                "{}:{}:{}:{}:{}",
+                tx.id, tx.sender, tx.receiver, tx.amount, tx.timestamp
             );
 
             // Retrieve the sender's public key

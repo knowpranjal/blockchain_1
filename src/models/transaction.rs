@@ -1,14 +1,14 @@
 use crate::DAGs::transaction_dag::{DAG, BlockTransaction}; // Import the DAG and Transaction
 use crate::models::user::UserPool;
-use crate::DAGs::user_DAG::LocalDAG; // Import the local DAG
 use crate::models::pki::KeyPairWrapper;
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid; // Add this import at the top of `transaction.rs`
 
 pub fn process_transactions(
-    transactions_data: Vec<(String, String, u64)>,
+    transactions_data: Vec<(String, String, String, u64)>,
     user_pool: Arc<Mutex<UserPool>>,
     dag: Arc<Mutex<DAG>>,
     stream: &mut TcpStream,
@@ -19,7 +19,18 @@ pub fn process_transactions(
         // Start of `user_pool` lock scope
         let mut pool = user_pool.lock().unwrap();
 
-        for (sender_name, receiver_name, amount) in transactions_data {
+        for (tx_type, sender_name, receiver_name, amount) in transactions_data {
+            if tx_type != "TOKEN" {
+                let _ = stream.write(
+                    format!(
+                        "Error: Transaction type {} is not specified as of now\n",
+                        tx_type
+                    )
+                    .as_bytes(),
+                );
+                continue;
+            }
+
             if !pool.user_exists(&sender_name) || !pool.user_exists(&receiver_name) {
                 let _ = stream.write(
                     format!(
@@ -30,6 +41,9 @@ pub fn process_transactions(
                 );
                 continue;
             }
+
+            // Generate a unique transaction ID
+            let transaction_id = Uuid::new_v4().to_string();
 
             // First, process the sender in a separate scope
             let (signature, timestamp) = {
@@ -46,10 +60,10 @@ pub fn process_transactions(
                 let start = SystemTime::now();
                 let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-                // Create a message to sign
+                // Create a message to sign, including the transaction ID
                 let message = format!(
-                    "{}:{}:{}:{}",
-                    sender_name, receiver_name, amount, timestamp
+                    "{}:{}:{}:{}:{}",
+                    transaction_id, sender_name, receiver_name, amount, timestamp
                 );
 
                 // Sign the message using the sender's private key
@@ -88,6 +102,7 @@ pub fn process_transactions(
 
                 // Add transaction to sender's local DAG
                 if let Err(e) = sender.local_dag.add_transaction(
+                    transaction_id.clone(), // Use the generated transaction ID
                     sender_name.clone(),
                     receiver_name.clone(),
                     amount,
@@ -116,6 +131,7 @@ pub fn process_transactions(
 
                 // Add transaction to receiver's local DAG
                 if let Err(e) = receiver.local_dag.add_transaction(
+                    transaction_id.clone(), // Use the same transaction ID
                     sender_name.clone(),
                     receiver_name.clone(),
                     amount,
@@ -135,6 +151,7 @@ pub fn process_transactions(
 
             // Create a new transaction for the DAG
             let dag_transaction = BlockTransaction::new(
+                transaction_id.clone(), // Use the same transaction ID
                 sender_name.clone(),
                 receiver_name.clone(),
                 amount,

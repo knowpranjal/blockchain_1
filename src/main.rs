@@ -7,6 +7,7 @@ use crate::chains::blockchain::Blockchain;
 use crate::DAGs::transaction_dag::DAG;
 use crate::models::user::{User, UserPool};
 use crate::models::transaction::process_transactions;
+use crate::models::pki::KeyPairWrapper;
 
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
@@ -35,7 +36,60 @@ fn handle_client(
                 };
                 println!("Received request: {}", request);
 
-                if request.starts_with("TRANSACTION") {
+                if request.starts_with("QUERY_TRANSACTION") {
+                    let transaction_id = request.replace("QUERY_TRANSACTION ", "").trim().to_string();
+                    let dag = dag.lock().unwrap();
+                    if let Some(transaction) = dag.get_transaction(&transaction_id) {
+                        let response = format!(
+                            "Transaction found: ID: {}, Sender: {}, Receiver: {}, Amount: {}, Timestamp: {}, Signature: {:?}\n",
+                            transaction.id,
+                            transaction.sender,
+                            transaction.receiver,
+                            transaction.amount,
+                            transaction.timestamp,
+                            transaction.signature
+                        );
+                        let _ = stream.write(response.as_bytes());
+                    } else {
+                        let _ = stream.write(format!("Transaction with ID {} not found\n", transaction_id).as_bytes());
+                    }
+                    let _ = stream.flush();
+                }else if request.starts_with("FETCH_USER_DAGS") {
+                    let user_names_str = request.replace("FETCH_USER_DAGS ", "");
+                    let user_names: Vec<&str> = user_names_str.split_whitespace().collect();
+                    let pool = user_pool.lock().unwrap();
+    
+                    let mut response = String::new();
+    
+                    for user_name in user_names {
+                        if let Some(user) = pool.get_user(user_name) {
+                            response.push_str(&format!("User {}'s DAG:\n", user_name));
+                            response.push_str(&user.local_dag.get_dag_as_string());
+                            response.push_str("\n");
+                        } else {
+                            response.push_str(&format!("Error: User {} does not exist\n", user_name));
+                        }
+                    }
+    
+                    if let Err(e) = stream.write(response.as_bytes()) {
+                        eprintln!("Failed to send response: {}", e);
+                    }
+                    let _ = stream.flush();
+                } else if request.starts_with("CHECK_BALANCE") {
+                    let user_name = request.replace("CHECK_BALANCE ", "").trim().to_string();
+                    let pool = user_pool.lock().unwrap();
+    
+                    if let Some(user) = pool.get_user(&user_name) {
+                        let balance = user.get_balance();
+                        let _ = stream.write(
+                            format!("User {} has a balance of {}\n", user_name, balance).as_bytes(),
+                        );
+                        let _ = stream.flush();
+                    } else {
+                        let _ = stream.write(b"Error: User does not exist\n");
+                        let _ = stream.flush();
+                    }
+                } else if request.starts_with("TRANSACTION") {
                     let transaction_data = request.replace("TRANSACTION ", "");
                     let transactions = parse_transaction_data(&transaction_data);
 
@@ -91,7 +145,7 @@ fn handle_client(
                         response.push_str(&format!("  Children: {:?}\n", block.child_ids));
                         response.push_str(&format!(
                             "  Transactions: {:?}\n",
-                            block.transactions.iter().map(|tx| (tx.id, &tx.sender, &tx.receiver, tx.amount)).collect::<Vec<_>>()
+                            block.transactions.iter().map(|tx| (&tx.id, &tx.sender, &tx.receiver, tx.amount)).collect::<Vec<_>>()
                         ));
                         response.push_str("\n");
                     }
@@ -111,7 +165,80 @@ fn handle_client(
                     } else {
                         let _ = stream.write(b"Error: User does not exist\n");
                     }
-                } else {
+                } else if request.starts_with("VERIFY_TRANSACTION") {
+                    let transaction_id = request.replace("VERIFY_TRANSACTION ", "").trim().to_string();
+                    let dag = dag.lock().unwrap();
+                    let global_tx = match dag.get_transaction(&transaction_id) {
+                        Some(tx) => tx,
+                        None => {
+                            let _ = stream.write(format!("Transaction with ID {} not found in global DAG\n", transaction_id).as_bytes());
+                            let _ = stream.flush();
+                            continue;
+                        }
+                    };
+                
+                    // Get the sender and receiver names from the transaction
+                    let sender_name = global_tx.sender.clone();
+                    let receiver_name = global_tx.receiver.clone();
+                
+                    let pool = user_pool.lock().unwrap();
+                
+                    // Retrieve the transaction from the sender's local DAG
+                    let sender_tx = match pool.get_user(&sender_name)
+                        .and_then(|user| user.local_dag.get_transaction_by_id(&transaction_id)) {
+                        Some(tx) => tx,
+                        None => {
+                            let _ = stream.write(format!("Transaction not found in sender {}'s DAG\n", sender_name).as_bytes());
+                            let _ = stream.flush();
+                            continue;
+                        }
+                    };
+                
+                    // Retrieve the transaction from the receiver's local DAG
+                    let receiver_tx = match pool.get_user(&receiver_name)
+                        .and_then(|user| user.local_dag.get_transaction_by_id(&transaction_id)) {
+                        Some(tx) => tx,
+                        None => {
+                            let _ = stream.write(format!("Transaction not found in receiver {}'s DAG\n", receiver_name).as_bytes());
+                            let _ = stream.flush();
+                            continue;
+                        }
+                    };
+                
+                    // Compute hashes
+                    let sender_hash = sender_tx.compute_hash();
+                    let receiver_hash = receiver_tx.compute_hash();
+                    let hashes_match = sender_hash == receiver_hash;
+                
+                    // Verify the signature
+                    let message = format!(
+                        "{}:{}:{}:{}:{}",
+                        global_tx.id, global_tx.sender, global_tx.receiver, global_tx.amount, global_tx.timestamp
+                    );
+                    let sender_public_key = match pool.get_user_public_key(&global_tx.sender) {
+                        Some(pk) => pk,
+                        None => {
+                            let _ = stream.write(format!("Sender public key not found for {}\n", global_tx.sender).as_bytes());
+                            let _ = stream.flush();
+                            continue;
+                        }
+                    };
+                
+                    let signature_valid = KeyPairWrapper::verify(
+                        &sender_public_key,
+                        message.as_bytes(),
+                        &global_tx.signature,
+                    ).is_ok();
+                
+                    if hashes_match && signature_valid {
+                        let _ = stream.write(b"Transaction integrity verified successfully\n");
+                    } else {
+                        let _ = stream.write(b"Transaction integrity verification failed\n");
+                    }
+                    let _ = stream.flush();
+                }
+                
+                else {
                     if let Err(e) = stream.write(b"Unknown command\n") {
                         eprintln!("Failed to send response: {}", e);
                         return;
@@ -137,22 +264,23 @@ fn parse_add_user_data(data: &str) -> (String, String) {
 }
 
 // Helper function to parse multiple transactions
-fn parse_transaction_data(data: &str) -> Vec<(String, String, u64)> {
+fn parse_transaction_data(data: &str) -> Vec<(String, String, String, u64)> {
     let parts: Vec<&str> = data.split_whitespace().collect();
     let mut transactions = Vec::new();
 
-    if parts.len() % 3 != 0 {
+    if parts.len() % 4 != 0 {
         return transactions; // Return empty if data is invalid
     }
 
-    for chunk in parts.chunks(3) {
-        let sender = chunk[0].to_string();
-        let receiver = chunk[1].to_string();
-        let amount = match chunk[2].parse() {
+    for chunk in parts.chunks(4) {
+        let tx_type = chunk[0].to_string();
+        let sender = chunk[1].to_string();
+        let receiver = chunk[2].to_string();
+        let amount = match chunk[3].parse() {
             Ok(val) => val,
             Err(_) => continue, // Skip invalid transactions
         };
-        transactions.push((sender, receiver, amount));
+        transactions.push((tx_type, sender, receiver, amount));
     }
 
     transactions

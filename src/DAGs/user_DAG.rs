@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use sha2::{Sha256, Digest};
+
 #[derive(Debug, Clone)]
 pub struct Transaction {
     pub id: String,
@@ -9,12 +11,13 @@ pub struct Transaction {
     pub amount: u64,
     pub parent_id: Option<String>, // Parent transaction ID
     pub child_ids: Vec<String>,    // Children transaction IDs
-    pub signature: Vec<u8>,        // New field: Signature
-    pub timestamp: u64,            // New field: Timestamp
+    pub signature: Vec<u8>,        // Signature
+    pub timestamp: u64,            // Timestamp
 }
 
 impl Transaction {
     pub fn new(
+        id: String, // Use provided transaction ID
         sender: String,
         receiver: String,
         amount: u64,
@@ -23,7 +26,7 @@ impl Transaction {
         timestamp: u64,
     ) -> Self {
         Transaction {
-            id: Uuid::new_v4().to_string(), // Generate unique ID for each transaction
+            id, // Use the provided ID
             sender,
             receiver,
             amount,
@@ -33,7 +36,19 @@ impl Transaction {
             timestamp,
         }
     }
+
+    pub fn compute_hash(&self) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(self.id.as_bytes());
+        hasher.update(self.sender.as_bytes());
+        hasher.update(self.receiver.as_bytes());
+        hasher.update(&self.amount.to_le_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(&self.signature);
+        hasher.finalize().to_vec()
+    }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct LocalDAG {
@@ -51,6 +66,7 @@ impl LocalDAG {
 
     pub fn add_transaction(
         &mut self,
+        transaction_id: String, // Accept the transaction ID
         sender_name: String,
         receiver_name: String,
         amount: u64,
@@ -60,6 +76,7 @@ impl LocalDAG {
         let parent_id = self.latest_transaction_id.clone(); // The parent is the latest transaction
 
         let transaction = Transaction::new(
+            transaction_id.clone(), // Use the provided transaction ID
             sender_name.clone(),
             receiver_name.clone(),
             amount,
@@ -85,6 +102,10 @@ impl LocalDAG {
         self.latest_transaction_id = Some(transaction_id);
 
         Ok(())
+    }
+
+    pub fn get_transaction_by_id(&self, transaction_id: &str) -> Option<&Transaction> {
+        self.transactions.get(transaction_id)
     }
 
     pub fn print_dag_in_order(&self) {
@@ -121,5 +142,49 @@ impl LocalDAG {
 
     pub fn get_transaction(&self, transaction_id: &str) -> Option<&Transaction> {
         self.transactions.get(transaction_id)
+    }
+
+    pub fn get_dag_as_string(&self) -> String {
+        let mut output = String::new();
+        // Find all root transactions (those with no parent)
+        let root_transactions: Vec<&Transaction> = self
+            .transactions
+            .values()
+            .filter(|&tx| tx.parent_id.is_none())
+            .collect();
+
+        // Traverse each root transaction
+        for root_tx in root_transactions {
+            self.traverse_and_build_string(root_tx, &mut output, 0);
+        }
+
+        output
+    }
+
+    fn traverse_and_build_string(
+        &self,
+        transaction: &Transaction,
+        output: &mut String,
+        depth: usize,
+    ) {
+        let indent = "  ".repeat(depth);
+        output.push_str(&format!(
+            "{}Transaction ID: {}, Sender: {}, Receiver: {}, Amount: {}, Timestamp: {}, Signature: {:?}, Parent: {:?}, Children: {:?}\n",
+            indent,
+            transaction.id,
+            transaction.sender,
+            transaction.receiver,
+            transaction.amount,
+            transaction.timestamp,
+            transaction.signature,
+            transaction.parent_id,
+            transaction.child_ids
+        ));
+
+        for child_id in &transaction.child_ids {
+            if let Some(child_tx) = self.transactions.get(child_id) {
+                self.traverse_and_build_string(child_tx, output, depth + 1);
+            }
+        }
     }
 }

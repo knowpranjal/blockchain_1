@@ -34,6 +34,10 @@ impl User {
             local_dag: LocalDAG::new(), // Initialize the local DAG
         }
     }
+
+    pub fn get_balance(&self) -> u64 {
+        self.wallet.balance
+    }
 }
 
 #[derive(Debug)]
