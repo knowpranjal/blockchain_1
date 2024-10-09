@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
 
 use sha2::{Sha256, Digest};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Transaction {
     pub id: String,
     pub sender: String,
@@ -50,7 +51,9 @@ impl Transaction {
 }
 
 
-#[derive(Debug, Clone)]
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalDAG {
     pub transactions: HashMap<String, Transaction>,
     pub latest_transaction_id: Option<String>, // Keep track of the latest transaction

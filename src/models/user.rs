@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 use crate::models::pki::KeyPairWrapper; // Import the PKI module
 use crate::DAGs::user_DAG::LocalDAG; // Import the local DAG
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Wallet {
     pub balance: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct User {
     pub name: String,
     pub wallet: Wallet,
     pub public_key: Vec<u8>,
+    #[serde(skip)]
     pub key_pair_wrapper: KeyPairWrapper, // Include the key pair wrapper
     pub local_dag: LocalDAG,              // Add local DAG to the user
 }
@@ -40,7 +42,7 @@ impl User {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserPool {
     users: HashMap<String, User>,
 }

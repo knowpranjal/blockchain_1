@@ -1,8 +1,11 @@
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, Signature, VerificationAlgorithm, ED25519};
+use serde::{Serialize, Deserialize};
+use serde_bytes;
 
-#[derive(Clone, Debug)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPairWrapper {
+    #[serde(with = "serde_bytes")]
     pub pkcs8_bytes: Vec<u8>,
 }
 

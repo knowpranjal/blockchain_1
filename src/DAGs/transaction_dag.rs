@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use crate::models::user::UserPool;
 use crate::models::pki::KeyPairWrapper;
+use serde::{Serialize, Deserialize};
 
 /// Represents a transaction to be included in a block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockTransaction {
     pub id: String, // Change from u64 to String
     pub sender: String,
@@ -36,7 +37,7 @@ impl BlockTransaction {
 
 
 /// Represents a block in the blockchain DAG.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub id: String,
     pub transactions: Vec<BlockTransaction>,
@@ -45,11 +46,13 @@ pub struct Block {
 }
 
 /// Represents the blockchain as a DAG.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(deserialize = ""))]
 pub struct DAG {
     pub blocks: HashMap<String, Block>, // Stores all blocks by their ID.
     pub tips: HashSet<String>,          // Blocks without children (the tips of the DAG).
     pub current_height: u64,            // Current height of the blockchain.
+    #[serde(skip_serializing, skip_deserializing)]
     pub user_pool: Arc<Mutex<UserPool>>, // Reference to the user pool
 }
 
