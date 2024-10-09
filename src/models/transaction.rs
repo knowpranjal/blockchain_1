@@ -6,6 +6,8 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid; // Add this import at the top of `transaction.rs`
+use crate::models::persistence::{save_user_pool_state, save_dag_state};
+
 
 pub fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
@@ -182,6 +184,17 @@ pub fn process_transactions(
             Ok(_) => {
                 let _ = stream.write(b"Transactions added to DAG successfully\n");
                 stream.flush().unwrap();
+                
+                // Save the updated DAG state
+                if let Err(e) = save_dag_state(&dag) {
+                    eprintln!("Failed to save DAG state: {}", e);
+                }
+
+                // Save the updated UserPool state
+                let pool = user_pool.lock().unwrap();
+                if let Err(e) = save_user_pool_state(&pool) {
+                    eprintln!("Failed to save UserPool state: {}", e);
+                }
             }
             Err(e) => {
                 let _ = stream.write(format!("Error adding transactions to DAG: {}\n", e).as_bytes());

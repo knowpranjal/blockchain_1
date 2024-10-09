@@ -8,12 +8,17 @@ use crate::DAGs::transaction_dag::DAG;
 use crate::models::user::{User, UserPool};
 use crate::models::transaction::process_transactions;
 use crate::models::pki::KeyPairWrapper;
+use crate::models::persistence::{save_user_pool_state, load_user_pool_state, save_dag_state, load_dag_state};
 
 use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
+use std::io::{Read, self, Write};
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::str;
+
+
+const NODE_B_ADDRESS: &str = "192.168.0.121:8081"; // Replace with Node B's IP and port
+
 
 
 fn handle_client(
@@ -133,6 +138,10 @@ fn handle_client(
                                 public_key
                             ).as_bytes(),
                         );
+                        // Save the updated UserPool state
+                        if let Err(e) = save_user_pool_state(&pool) {
+                            eprintln!("Failed to save UserPool state: {}", e);
+                        }
                     }
                 } else if request.starts_with("PRINT_DAG") {
 
@@ -244,6 +253,10 @@ fn handle_client(
                         return;
                     }
                 }
+
+                if let Err(e) = forward_command_to_node_b(request) {
+                    eprintln!("Failed to forward command to Node B: {}", e);
+                }
             }
             Err(e) => {
                 eprintln!("Failed to read from stream: {}", e);
@@ -286,10 +299,60 @@ fn parse_transaction_data(data: &str) -> Vec<(String, String, String, u64)> {
     transactions
 }
 
+fn forward_command_to_node_b(command: &str) -> io::Result<()> {
+    // Connect to Node B
+    match TcpStream::connect(NODE_B_ADDRESS) {
+        Ok(mut stream) => {
+            // Send the command with a newline
+            stream.write_all((command.to_string() + "\n").as_bytes())?;
+            stream.flush()?;
+            println!("Forwarded command to Node B: {}", command);
+
+            // Read the response from Node B
+            let mut buffer = [0; 4096];
+            match stream.read(&mut buffer) {
+                Ok(0) => {
+                    println!("Connection closed by Node B");
+                }
+                Ok(bytes_read) => {
+                    let response = match str::from_utf8(&buffer[..bytes_read]) {
+                        Ok(v) => v.trim(),
+                        Err(_) => "Error: Invalid UTF-8 in response from Node B",
+                    };
+                    println!("Response from Node B: {}", response);
+                }
+                Err(e) => {
+                    eprintln!("Failed to read from Node B: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to Node B at {}: {}", NODE_B_ADDRESS, e);
+        }
+    }
+    Ok(())
+}
+
+
 
 fn main() {
-    let user_pool = Arc::new(Mutex::new(UserPool::new()));
-    let dag = Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))));  // Initialize DAG
+
+     // Load UserPool state
+    let user_pool = if let Some(pool) = load_user_pool_state() {
+        Arc::new(Mutex::new(pool))
+    } else {
+        Arc::new(Mutex::new(UserPool::new()))
+    };
+
+    // Load DAG state
+    let dag = if let Some(loaded_dag) = load_dag_state(Arc::clone(&user_pool)) {
+        Arc::new(Mutex::new(loaded_dag))
+    } else {
+        Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))))
+    };
+
+    // let user_pool = Arc::new(Mutex::new(UserPool::new()));
+    // let dag = Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))));  // Initialize DAG
 
     // {
     //     // Initialize the user pool with some users
