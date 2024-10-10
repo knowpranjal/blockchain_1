@@ -1,7 +1,7 @@
 import socket
 
 def send_command(command):
-    host = '192.168.0.121'   # Ensure this matches the IP address of the device your rust node is live on
+    host = '192.168.1.14'   # Ensure this matches the IP address of the device your rust node is live on
     port = 8080  # Ensure this matches the port your node is listening on
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -31,8 +31,8 @@ def send_command(command):
 
 
 
-# tran_response = send_command("TRANSACTION TOKEN Bob Alice 150")
-# print(tran_response)
+tran_response = send_command("TRANSACTION TOKEN Bob Alice 150")
+print(tran_response)
 
 
 # # Check balance for Alice
@@ -45,17 +45,17 @@ def send_command(command):
 
 
 
-# Check balance for Alice
-alice_bal_response = send_command("CHECK_BALANCE Alice")
-print(alice_bal_response)
+# # Check balance for Alice
+# alice_bal_response = send_command("CHECK_BALANCE Alice")
+# print(alice_bal_response)
 
-# Check balance for Bob
-bob_bal_response = send_command("CHECK_BALANCE Bob")
-print(bob_bal_response)
+# # Check balance for Bob
+# bob_bal_response = send_command("CHECK_BALANCE Bob")
+# print(bob_bal_response)
 
 
-response = send_command("PRINT_DAG")
-print(response)
+# response = send_command("PRINT_DAG")
+# print(response)
 
 
 
