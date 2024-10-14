@@ -41,7 +41,24 @@ fn handle_client(
                 };
                 println!("Received request: {}", request);
 
-                if request.starts_with("QUERY_TRANSACTION") {
+                if request.starts_with("VALIDATE_LOCAL_DAG") {
+                    let user_name = request.replace("VALIDATE_LOCAL_DAG ", "").trim().to_string();
+                    let pool = user_pool.lock().unwrap();
+                    if let Some(user) = pool.get_user(&user_name) {
+                        match user.validate_local_dag(&pool) {
+                            Ok(_) => {
+                                let _ = stream.write(b"Local DAG is valid\n");
+                            }
+                            Err(e) => {
+                                let _ = stream.write(format!("Local DAG validation failed: {}\n", e).as_bytes());
+                            }
+                        }
+                        let _ = stream.flush();
+                    } else {
+                        let _ = stream.write(b"Error: User does not exist\n");
+                        let _ = stream.flush();
+                    }
+                } else if request.starts_with("QUERY_TRANSACTION") {
                     let transaction_id = request.replace("QUERY_TRANSACTION ", "").trim().to_string();
                     let dag = dag.lock().unwrap();
                     if let Some(transaction) = dag.get_transaction(&transaction_id) {

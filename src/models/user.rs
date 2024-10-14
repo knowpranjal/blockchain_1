@@ -14,8 +14,10 @@ pub struct User {
     pub wallet: Wallet,
     pub public_key: Vec<u8>,
     #[serde(skip)]
-    pub key_pair_wrapper: KeyPairWrapper, // Include the key pair wrapper
-    pub local_dag: LocalDAG,              // Add local DAG to the user
+    pub key_pair_wrapper: KeyPairWrapper,
+    pub local_dag: LocalDAG,
+    #[serde(default)]
+    pub initial_balance: u64, // Add this field
 }
 
 impl User {
@@ -33,8 +35,13 @@ impl User {
             },
             public_key,
             key_pair_wrapper,
-            local_dag: LocalDAG::new(), // Initialize the local DAG
+            local_dag: LocalDAG::new(),
+            initial_balance, // Set initial_balance
         }
+    }
+
+    pub fn validate_local_dag(&self, user_pool: &UserPool) -> Result<(), String> {
+        self.local_dag.validate_transactions(&self.name, &self.public_key, user_pool)
     }
 
     pub fn get_balance(&self) -> u64 {
@@ -52,6 +59,10 @@ impl UserPool {
         UserPool {
             users: HashMap::new(),
         }
+    }
+
+    pub fn get_user_initial_balance(&self, name: &str) -> Option<u64> {
+        self.users.get(name).map(|user| user.initial_balance)
     }
 
     pub fn add_user(&mut self, user: User) {

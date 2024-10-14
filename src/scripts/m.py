@@ -1,7 +1,7 @@
 import socket
 
 def send_command(command):
-    host = '192.168.1.14'   # Ensure this matches the IP address of the device your rust node is live on
+    host = '192.168.1.12'   # Ensure this matches the IP address of the device your rust node is live on
     port = 8080  # Ensure this matches the port your node is listening on
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -84,3 +84,6 @@ user_names = ["Pawan", "Nikhil"]
 fetch_dags_command = "FETCH_USER_DAGS " + " ".join(user_names)
 user_dags_response = send_command(fetch_dags_command)
 print("Fetched User DAGs:\n", user_dags_response)
+
+response = send_command("VALIDATE_LOCAL_DAG Alice")
+print(response)

@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use uuid::Uuid;
+use std::collections::HashSet;
+use crate::models::pki::KeyPairWrapper;
+use crate::models::user::UserPool;
 use serde::{Serialize, Deserialize};
 
 use sha2::{Sha256, Digest};
@@ -189,5 +192,116 @@ impl LocalDAG {
                 self.traverse_and_build_string(child_tx, output, depth + 1);
             }
         }
+    }
+
+    pub fn validate_transactions(
+        &self,
+        user_name: &str,
+        user_public_key: &[u8],
+        user_pool: &UserPool,
+    ) -> Result<(), String> {
+        let mut visited = HashSet::new();
+
+        // Find root transactions (transactions with no parent)
+        let root_transactions: Vec<&Transaction> = self.transactions.values()
+            .filter(|tx| tx.parent_id.is_none())
+            .collect();
+
+        // Starting balance for validation
+        let initial_balance = user_pool.get_user_initial_balance(user_name).unwrap_or(0);
+        let mut balance = initial_balance;
+
+        // Traverse each root transaction
+        for root_tx in root_transactions {
+            self.validate_transaction_recursive(
+                root_tx,
+                user_name,
+                user_pool,
+                &mut visited,
+                &mut balance,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_transaction_recursive(
+        &self,
+        transaction: &Transaction,
+        user_name: &str,
+        user_pool: &UserPool,
+        visited: &mut HashSet<String>,
+        balance: &mut u64,
+    ) -> Result<(), String> {
+        if visited.contains(&transaction.id) {
+            // Transaction already validated
+            return Ok(());
+        }
+
+        // Mark transaction as visited
+        visited.insert(transaction.id.clone());
+
+        // Verify the transaction's signature
+        let message = format!(
+            "{}:{}:{}:{}:{}",
+            transaction.id,
+            transaction.sender,
+            transaction.receiver,
+            transaction.amount,
+            transaction.timestamp,
+        );
+
+        // Get sender's public key
+        let sender_public_key = user_pool
+            .get_user_public_key(&transaction.sender)
+            .ok_or(format!("Public key not found for user {}", transaction.sender))?;
+
+        if let Err(e) = KeyPairWrapper::verify(
+            &sender_public_key,
+            message.as_bytes(),
+            &transaction.signature,
+        ) {
+            return Err(format!(
+                "Invalid signature for transaction {}: {:?}",
+                transaction.id, e
+            ));
+        }
+
+        // If the transaction has a parent, validate the parent first
+        if let Some(parent_id) = &transaction.parent_id {
+            if let Some(parent_tx) = self.transactions.get(parent_id) {
+                self.validate_transaction_recursive(
+                    parent_tx,
+                    user_name,
+                    user_pool,
+                    visited,
+                    balance,
+                )?;
+            } else {
+                return Err(format!(
+                    "Parent transaction {} not found for transaction {}",
+                    parent_id, transaction.id
+                ));
+            }
+        }
+
+        // Update balance
+        // If the user is the sender, subtract amount
+        if transaction.sender == user_name {
+            if *balance < transaction.amount {
+                return Err(format!(
+                    "Insufficient balance for transaction {}",
+                    transaction.id
+                ));
+            }
+            *balance -= transaction.amount;
+        }
+
+        // If the user is the receiver, add amount
+        if transaction.receiver == user_name {
+            *balance += transaction.amount;
+        }
+
+        Ok(())
     }
 }

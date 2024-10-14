@@ -7,7 +7,17 @@ use std::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid; // Add this import at the top of `transaction.rs`
 use crate::models::persistence::{save_user_pool_state, save_dag_state};
+use serde::{Serialize, Deserialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingTransaction {
+    pub id: String,
+    pub sender: String,
+    pub receiver: String,
+    pub amount: u64,
+    pub signature: Vec<u8>,
+    pub timestamp: u64,
+}
 
 pub fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
