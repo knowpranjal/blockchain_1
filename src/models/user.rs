@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::models::pki::KeyPairWrapper; // Import the PKI module
+use crate::models::transaction::PendingTransaction; // Import PendingTransaction
 use crate::DAGs::user_DAG::LocalDAG; // Import the local DAG
 use serde::{Serialize, Deserialize};
 
@@ -8,15 +9,13 @@ pub struct Wallet {
     pub balance: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub name: String,
     pub wallet: Wallet,
     pub public_key: Vec<u8>,
-    #[serde(skip)]
     pub key_pair_wrapper: KeyPairWrapper,
     pub local_dag: LocalDAG,
-    #[serde(default)]
     pub initial_balance: u64, // Add this field
 }
 
@@ -52,12 +51,14 @@ impl User {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserPool {
     users: HashMap<String, User>,
+    pub pending_transactions: HashMap<String, PendingTransaction>,
 }
 
 impl UserPool {
     pub fn new() -> UserPool {
         UserPool {
             users: HashMap::new(),
+            pending_transactions: HashMap::new(),
         }
     }
 

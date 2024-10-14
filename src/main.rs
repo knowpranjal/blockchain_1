@@ -6,7 +6,7 @@ mod DAGs;
 use crate::chains::blockchain::Blockchain;
 use crate::DAGs::transaction_dag::DAG;
 use crate::models::user::{User, UserPool};
-use crate::models::transaction::process_transactions;
+use crate::models::transaction::{process_transactions, finalize_transaction, PendingTransaction};
 use crate::models::pki::KeyPairWrapper;
 use crate::models::persistence::{save_user_pool_state, load_user_pool_state, save_dag_state, load_dag_state};
 
@@ -18,8 +18,6 @@ use std::str;
 
 
 const NODE_B_ADDRESS: &str = "192.168.0.121:8081"; // Replace with Node B's IP and port
-
-
 
 fn handle_client(
     mut stream: TcpStream,
@@ -41,7 +39,110 @@ fn handle_client(
                 };
                 println!("Received request: {}", request);
 
-                if request.starts_with("VALIDATE_LOCAL_DAG") {
+                if request.starts_with("VIEW_PENDING_TRANSACTIONS") {
+                    let user_name = request.replace("VIEW_PENDING_TRANSACTIONS ", "").trim().to_string();
+                    let pool = user_pool.lock().unwrap();
+                    if !pool.user_exists(&user_name) {
+                        let _ = stream.write(b"Error: User does not exist\n");
+                        continue;
+                    }
+                    let pending_txs: Vec<_> = pool.pending_transactions.values()
+                        .filter(|tx| tx.receiver == user_name)
+                        .collect();
+                    if pending_txs.is_empty() {
+                        let _ = stream.write(b"No pending transactions\n");
+                    } else {
+                        for tx in pending_txs {
+                            let _ = stream.write(
+                                format!(
+                                    "Pending Transaction ID: {}, From: {}, Amount: {}\n",
+                                    tx.id, tx.sender, tx.amount
+                                )
+                                .as_bytes(),
+                            );
+                        }
+                    }
+                    let _ = stream.flush();
+                } else if request.starts_with("CONFIRM_TRANSACTION") {
+                    let parts: Vec<&str> = request.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        let _ = stream.write(b"Usage: CONFIRM_TRANSACTION <UserName> <TransactionID>\n");
+                        continue;
+                    }
+                    let user_name = parts[1];
+                    let transaction_id = parts[2];
+                
+                    // Lock user_pool briefly to get and remove pending_tx
+                    let pending_tx = {
+                        let mut pool = user_pool.lock().unwrap();
+                        let pending_tx = match pool.pending_transactions.remove(transaction_id) {
+                            Some(tx) => tx.clone(),
+                            None => {
+                                let _ = stream.write(b"Error: Transaction not found\n");
+                                continue;
+                            }
+                        };
+                        if pending_tx.receiver != user_name {
+                            let _ = stream.write(b"Error: Transaction is not pending for this user\n");
+                            // Re-insert pending_tx into pending_transactions
+                            pool.pending_transactions.insert(transaction_id.to_string(), pending_tx);
+                            continue;
+                        }
+                        // Save the updated UserPool state
+                        if let Err(e) = save_user_pool_state(&pool) {
+                            eprintln!("Failed to save UserPool state: {}", e);
+                        }
+                        pending_tx
+                    }; // Release the lock on user_pool
+                
+                    // Proceed to finalize the transaction
+                    let result = finalize_transaction(
+                        pending_tx.clone(),
+                        Arc::clone(&user_pool),
+                        Arc::clone(&dag),
+                    );
+                
+                    match result {
+                        Ok(_) => {
+                            let _ = stream.write(b"Transaction confirmed and processed\n");
+                        }
+                        Err(e) => {
+                            let _ = stream.write(format!("Error processing transaction: {}\n", e).as_bytes());
+                        }
+                    }
+                
+                    let _ = stream.flush();
+                } else if request.starts_with("REJECT_TRANSACTION") {
+                    let parts: Vec<&str> = request.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        let _ = stream.write(b"Usage: REJECT_TRANSACTION <UserName> <TransactionID>\n");
+                        continue;
+                    }
+                    let user_name = parts[1];
+                    let transaction_id = parts[2];
+                    let mut pool = user_pool.lock().unwrap();
+                    let pending_tx = match pool.pending_transactions.get(transaction_id) {
+                        Some(tx) => tx.clone(),
+                        None => {
+                            let _ = stream.write(b"Error: Transaction not found\n");
+                            continue;
+                        }
+                    };
+                    if pending_tx.receiver != user_name {
+                        let _ = stream.write(b"Error: Transaction is not pending for this user\n");
+                        continue;
+                    }
+
+                    // Remove from pending transactions
+                    pool.pending_transactions.remove(transaction_id);
+                    let _ = stream.write(b"Transaction rejected\n");
+
+                    // Save the updated UserPool state
+                    if let Err(e) = save_user_pool_state(&pool) {
+                        eprintln!("Failed to save UserPool state: {}", e);
+                    }
+                    let _ = stream.flush();
+                } else if request.starts_with("VALIDATE_LOCAL_DAG") {
                     let user_name = request.replace("VALIDATE_LOCAL_DAG ", "").trim().to_string();
                     let pool = user_pool.lock().unwrap();
                     if let Some(user) = pool.get_user(&user_name) {
@@ -76,13 +177,13 @@ fn handle_client(
                         let _ = stream.write(format!("Transaction with ID {} not found\n", transaction_id).as_bytes());
                     }
                     let _ = stream.flush();
-                }else if request.starts_with("FETCH_USER_DAGS") {
+                } else if request.starts_with("FETCH_USER_DAGS") {
                     let user_names_str = request.replace("FETCH_USER_DAGS ", "");
                     let user_names: Vec<&str> = user_names_str.split_whitespace().collect();
                     let pool = user_pool.lock().unwrap();
-    
+
                     let mut response = String::new();
-    
+
                     for user_name in user_names {
                         if let Some(user) = pool.get_user(user_name) {
                             response.push_str(&format!("User {}'s DAG:\n", user_name));
@@ -92,7 +193,7 @@ fn handle_client(
                             response.push_str(&format!("Error: User {} does not exist\n", user_name));
                         }
                     }
-    
+
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
                     }
@@ -100,7 +201,7 @@ fn handle_client(
                 } else if request.starts_with("CHECK_BALANCE") {
                     let user_name = request.replace("CHECK_BALANCE ", "").trim().to_string();
                     let pool = user_pool.lock().unwrap();
-    
+
                     if let Some(user) = pool.get_user(&user_name) {
                         let balance = user.get_balance();
                         let _ = stream.write(
@@ -127,11 +228,11 @@ fn handle_client(
                         &mut stream,
                     );
 
-                    print!("halla bol");
+                    // print!("halla bol");
                 } else if request.starts_with("ADD_USER") {
                     let user_data = request.replace("ADD_USER ", "");
                     let (name, balance_str) = parse_add_user_data(&user_data);
-                
+
                     let balance: u64 = match balance_str.parse() {
                         Ok(val) => val,
                         Err(_) => {
@@ -139,7 +240,7 @@ fn handle_client(
                             continue;
                         }
                     };
-                
+
                     let mut pool = user_pool.lock().unwrap();
                     if pool.user_exists(&name) {
                         let _ = stream.write(b"Error: User already exists\n");
@@ -149,9 +250,9 @@ fn handle_client(
                         pool.add_user(user);
                         let _ = stream.write(
                             format!(
-                                "User {} added with balance {} and public key {:?}\n", 
-                                name, 
-                                balance, 
+                                "User {} added with balance {} and public key {:?}\n",
+                                name,
+                                balance,
                                 public_key
                             ).as_bytes(),
                         );
@@ -161,7 +262,6 @@ fn handle_client(
                         }
                     }
                 } else if request.starts_with("PRINT_DAG") {
-
                     let dag = dag.lock().unwrap();
                     let mut response = String::new();
                     response.push_str("Blockchain DAG:\n");
@@ -178,12 +278,11 @@ fn handle_client(
                     if let Err(e) = stream.write(response.as_bytes()) {
                         eprintln!("Failed to send response: {}", e);
                     }
-
                 } else if request.starts_with("PRINT_USER_DAG") {
                     println!("Command received");
                     let user_name = request.replace("PRINT_USER_DAG ", "").trim().to_string();
                     let pool = user_pool.lock().unwrap();
-                    
+
                     if let Some(user) = pool.get_user(&user_name) {
                         // Call the print_dag method from LocalDAG
                         user.local_dag.print_dag_in_order();
@@ -202,13 +301,13 @@ fn handle_client(
                             continue;
                         }
                     };
-                
+
                     // Get the sender and receiver names from the transaction
                     let sender_name = global_tx.sender.clone();
                     let receiver_name = global_tx.receiver.clone();
-                
+
                     let pool = user_pool.lock().unwrap();
-                
+
                     // Retrieve the transaction from the sender's local DAG
                     let sender_tx = match pool.get_user(&sender_name)
                         .and_then(|user| user.local_dag.get_transaction_by_id(&transaction_id)) {
@@ -219,7 +318,7 @@ fn handle_client(
                             continue;
                         }
                     };
-                
+
                     // Retrieve the transaction from the receiver's local DAG
                     let receiver_tx = match pool.get_user(&receiver_name)
                         .and_then(|user| user.local_dag.get_transaction_by_id(&transaction_id)) {
@@ -230,12 +329,12 @@ fn handle_client(
                             continue;
                         }
                     };
-                
+
                     // Compute hashes
                     let sender_hash = sender_tx.compute_hash();
                     let receiver_hash = receiver_tx.compute_hash();
                     let hashes_match = sender_hash == receiver_hash;
-                
+
                     // Verify the signature
                     let message = format!(
                         "{}:{}:{}:{}:{}",
@@ -249,31 +348,30 @@ fn handle_client(
                             continue;
                         }
                     };
-                
+
                     let signature_valid = KeyPairWrapper::verify(
                         &sender_public_key,
                         message.as_bytes(),
                         &global_tx.signature,
                     ).is_ok();
-                
+
                     if hashes_match && signature_valid {
                         let _ = stream.write(b"Transaction integrity verified successfully\n");
                     } else {
                         let _ = stream.write(b"Transaction integrity verification failed\n");
                     }
                     let _ = stream.flush();
-                }
-                
-                else {
+                } else {
                     if let Err(e) = stream.write(b"Unknown command\n") {
                         eprintln!("Failed to send response: {}", e);
                         return;
                     }
                 }
 
-                if let Err(e) = forward_command_to_node_b(request) {
-                    eprintln!("Failed to forward command to Node B: {}", e);
-                }
+                // Uncomment if you want to forward commands to Node B
+                // if let Err(e) = forward_command_to_node_b(request) {
+                //     eprintln!("Failed to forward command to Node B: {}", e);
+                // }
             }
             Err(e) => {
                 eprintln!("Failed to read from stream: {}", e);
@@ -283,17 +381,8 @@ fn handle_client(
     }
 }
 
-// Helper function to parse ADD_USER data
-fn parse_add_user_data(data: &str) -> (String, String) {
-    let parts: Vec<&str> = data.split_whitespace().collect();
-    if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        ("".to_string(), "0".to_string()) // Return empty or default values in case of incorrect input
-    }
-}
+// Helper functions
 
-// Helper function to parse multiple transactions
 fn parse_transaction_data(data: &str) -> Vec<(String, String, String, u64)> {
     let parts: Vec<&str> = data.split_whitespace().collect();
     let mut transactions = Vec::new();
@@ -316,45 +405,22 @@ fn parse_transaction_data(data: &str) -> Vec<(String, String, String, u64)> {
     transactions
 }
 
-fn forward_command_to_node_b(command: &str) -> io::Result<()> {
-    // Connect to Node B
-    match TcpStream::connect(NODE_B_ADDRESS) {
-        Ok(mut stream) => {
-            // Send the command with a newline
-            stream.write_all((command.to_string() + "\n").as_bytes())?;
-            stream.flush()?;
-            println!("Forwarded command to Node B: {}", command);
-
-            // Read the response from Node B
-            let mut buffer = [0; 4096];
-            match stream.read(&mut buffer) {
-                Ok(0) => {
-                    println!("Connection closed by Node B");
-                }
-                Ok(bytes_read) => {
-                    let response = match str::from_utf8(&buffer[..bytes_read]) {
-                        Ok(v) => v.trim(),
-                        Err(_) => "Error: Invalid UTF-8 in response from Node B",
-                    };
-                    println!("Response from Node B: {}", response);
-                }
-                Err(e) => {
-                    eprintln!("Failed to read from Node B: {}", e);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to connect to Node B at {}: {}", NODE_B_ADDRESS, e);
-        }
+fn parse_add_user_data(data: &str) -> (String, String) {
+    let parts: Vec<&str> = data.split_whitespace().collect();
+    if parts.len() == 2 {
+        (parts[0].to_string(), parts[1].to_string())
+    } else {
+        ("".to_string(), "0".to_string()) // Return empty or default values in case of incorrect input
     }
+}
+
+fn forward_command_to_node_b(command: &str) -> io::Result<()> {
+    // Existing code (optional)
     Ok(())
 }
 
-
-
 fn main() {
-
-     // Load UserPool state
+    // Load UserPool state
     let user_pool = if let Some(pool) = load_user_pool_state() {
         Arc::new(Mutex::new(pool))
     } else {
@@ -367,16 +433,6 @@ fn main() {
     } else {
         Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))))
     };
-
-    // let user_pool = Arc::new(Mutex::new(UserPool::new()));
-    // let dag = Arc::new(Mutex::new(DAG::new(Arc::clone(&user_pool))));  // Initialize DAG
-
-    // {
-    //     // Initialize the user pool with some users
-    //     let mut pool = user_pool.lock().unwrap();
-    //     pool.add_user(User::new("Pranjal".to_string(), 1000));
-    //     pool.add_user(User::new("Aditya".to_string(), 500));
-    // }
 
     let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
     println!("Server listening on port 8080");

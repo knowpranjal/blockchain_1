@@ -1,11 +1,11 @@
 use crate::DAGs::transaction_dag::{DAG, BlockTransaction}; // Import the DAG and Transaction
-use crate::models::user::UserPool;
+use crate::models::user::{UserPool};
 use crate::models::pki::KeyPairWrapper;
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
-use uuid::Uuid; // Add this import at the top of `transaction.rs`
+use uuid::Uuid;
 use crate::models::persistence::{save_user_pool_state, save_dag_state};
 use serde::{Serialize, Deserialize};
 
@@ -22,27 +22,24 @@ pub struct PendingTransaction {
 pub fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
     user_pool: Arc<Mutex<UserPool>>,
-    dag: Arc<Mutex<DAG>>,
+    _dag: Arc<Mutex<DAG>>, // DAG will be updated upon confirmation
     stream: &mut TcpStream,
 ) {
-    let mut dag_transactions = Vec::new(); // Collect transactions for the DAG
+    for (tx_type, sender_name, receiver_name, amount) in transactions_data {
+        if tx_type != "TOKEN" {
+            let _ = stream.write(
+                format!(
+                    "Error: Transaction type {} is not specified as of now\n",
+                    tx_type
+                )
+                .as_bytes(),
+            );
+            continue;
+        }
 
-    {
-        // Start of `user_pool` lock scope
-        let mut pool = user_pool.lock().unwrap();
-
-        for (tx_type, sender_name, receiver_name, amount) in transactions_data {
-            if tx_type != "TOKEN" {
-                let _ = stream.write(
-                    format!(
-                        "Error: Transaction type {} is not specified as of now\n",
-                        tx_type
-                    )
-                    .as_bytes(),
-                );
-                continue;
-            }
-
+        // Acquire a lock on the user pool to check if users exist and get necessary data
+        {
+            let pool = user_pool.lock().unwrap();
             if !pool.user_exists(&sender_name) || !pool.user_exists(&receiver_name) {
                 let _ = stream.write(
                     format!(
@@ -53,167 +50,189 @@ pub fn process_transactions(
                 );
                 continue;
             }
+            let sender = pool.get_user(&sender_name).unwrap();
 
-            // Generate a unique transaction ID
-            let transaction_id = Uuid::new_v4().to_string();
-
-            // First, process the sender in a separate scope
-            let (signature, timestamp) = {
-                let sender = pool.get_user_mut(&sender_name).unwrap();
-
-                if sender.wallet.balance < amount {
-                    let _ = stream.write(
-                        format!("Error: Insufficient balance for user {}\n", sender_name).as_bytes(),
-                    );
-                    continue;
-                }
-
-                // Generate timestamp
-                let start = SystemTime::now();
-                let timestamp = start.duration_since(UNIX_EPOCH).unwrap().as_secs();
-
-                // Create a message to sign, including the transaction ID
-                let message = format!(
-                    "{}:{}:{}:{}:{}",
-                    transaction_id, sender_name, receiver_name, amount, timestamp
+            if sender.wallet.balance < amount {
+                let _ = stream.write(
+                    format!("Error: Insufficient balance for user {}\n", sender_name).as_bytes(),
                 );
+                continue;
+            }
+        } // Release the lock on user_pool
 
-                // Sign the message using the sender's private key
-                let signature = match sender.key_pair_wrapper.sign(message.as_bytes()) {
-                    Ok(sig) => sig,
-                    Err(e) => {
-                        let _ = stream.write(
-                            format!(
-                                "Error: Failed to sign transaction for user {}: {}\n",
-                                sender_name, e
-                            )
-                            .as_bytes(),
-                        );
-                        continue;
-                    }
-                };
+        // Generate a unique transaction ID
+        let transaction_id = Uuid::new_v4().to_string();
 
-                // Verify the signature using the sender's public key
-                if let Err(e) = KeyPairWrapper::verify(
-                    &sender.public_key,
-                    message.as_bytes(),
-                    signature.as_ref(),
-                ) {
+        // Generate timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create a message to sign, including the transaction ID
+        let message = format!(
+            "{}:{}:{}:{}:{}",
+            transaction_id, sender_name, receiver_name, amount, timestamp
+        );
+
+        // Sign the message using the sender's private key
+        let signature = {
+            let pool = user_pool.lock().unwrap();
+            let sender = pool.get_user(&sender_name).unwrap();
+
+            match sender.key_pair_wrapper.sign(message.as_bytes()) {
+                Ok(sig) => sig.as_ref().to_vec(),
+                Err(e) => {
                     let _ = stream.write(
                         format!(
-                            "Error: Signature verification failed for user {}: {}\n",
+                            "Error: Failed to sign transaction for user {}: {}\n",
                             sender_name, e
                         )
                         .as_bytes(),
                     );
                     continue;
                 }
+            }
+        }; // Release the lock on user_pool
 
-                // Update sender's balance
-                sender.wallet.balance -= amount;
-
-                // Add transaction to sender's local DAG
-                if let Err(e) = sender.local_dag.add_transaction(
-                    transaction_id.clone(), // Use the generated transaction ID
-                    sender_name.clone(),
-                    receiver_name.clone(),
-                    amount,
-                    signature.as_ref().to_vec(),
-                    timestamp,
-                ) {
-                    let _ = stream.write(
-                        format!(
-                            "Error: Failed to add transaction to sender's DAG: {}\n",
-                            e
-                        )
-                        .as_bytes(),
-                    );
-                    continue;
-                }
-
-                (signature.as_ref().to_vec(), timestamp)
+        // Create a pending transaction
+        {
+            let mut pool = user_pool.lock().unwrap();
+            let pending_tx = PendingTransaction {
+                id: transaction_id.clone(),
+                sender: sender_name.clone(),
+                receiver: receiver_name.clone(),
+                amount,
+                signature: signature.clone(),
+                timestamp,
             };
 
-            // Now, process the receiver in a separate scope
-            {
-                let receiver = pool.get_user_mut(&receiver_name).unwrap();
+            // Add the pending transaction to the UserPool
+            pool.pending_transactions.insert(transaction_id.clone(), pending_tx);
 
-                // Update receiver's balance
-                receiver.wallet.balance += amount;
-
-                // Add transaction to receiver's local DAG
-                if let Err(e) = receiver.local_dag.add_transaction(
-                    transaction_id.clone(), // Use the same transaction ID
-                    sender_name.clone(),
-                    receiver_name.clone(),
-                    amount,
-                    signature.clone(),
-                    timestamp,
-                ) {
-                    let _ = stream.write(
-                        format!(
-                            "Error: Failed to add transaction to receiver's DAG: {}\n",
-                            e
-                        )
-                        .as_bytes(),
-                    );
-                    continue;
-                }
-            }
-
-            // Create a new transaction for the DAG
-            let dag_transaction = BlockTransaction::new(
-                transaction_id.clone(), // Use the same transaction ID
-                sender_name.clone(),
-                receiver_name.clone(),
-                amount,
-                signature,
-                timestamp,
+            // Inform the sender
+            let _ = stream.write(
+                format!(
+                    "Transaction {} is pending confirmation from {}\n",
+                    transaction_id, receiver_name
+                )
+                .as_bytes(),
             );
 
-            dag_transactions.push(dag_transaction);
-
-            // Log the transaction
-            println!(
-                "{} sent {} tokens to {}. New balances -> {}: {}, {}: {}",
-                sender_name,
-                amount,
-                receiver_name,
-                sender_name,
-                pool.get_user(&sender_name).unwrap().wallet.balance,
-                receiver_name,
-                pool.get_user(&receiver_name).unwrap().wallet.balance
-            );
-        } // End of `for` loop
-    } // End of `user_pool` lock scope
-
-    // Now, lock the `dag` mutex without holding the `user_pool` lock
-    if !dag_transactions.is_empty() {
-        let mut dag = dag.lock().unwrap();
-        match dag.add_transactions(dag_transactions) {
-            Ok(_) => {
-                let _ = stream.write(b"Transactions added to DAG successfully\n");
-                stream.flush().unwrap();
-                
-                // Save the updated DAG state
-                if let Err(e) = save_dag_state(&dag) {
-                    eprintln!("Failed to save DAG state: {}", e);
-                }
-
-                // Save the updated UserPool state
-                let pool = user_pool.lock().unwrap();
-                if let Err(e) = save_user_pool_state(&pool) {
-                    eprintln!("Failed to save UserPool state: {}", e);
-                }
+            // Save the updated UserPool state
+            if let Err(e) = save_user_pool_state(&pool) {
+                eprintln!("Failed to save UserPool state: {}", e);
             }
-            Err(e) => {
-                let _ = stream.write(format!("Error adding transactions to DAG: {}\n", e).as_bytes());
-                stream.flush().unwrap();
-            }
-        }
-    } else {
-        let _ = stream.write(b"No valid transactions to process\n");
-        stream.flush().unwrap();
+        } // Release the lock on user_pool
+
+        // No need to update balances or DAGs here; will be done upon confirmation
     }
 }
 
+pub fn finalize_transaction(
+    pending_tx: PendingTransaction,
+    user_pool: Arc<Mutex<UserPool>>,
+    dag: Arc<Mutex<DAG>>,
+) -> Result<(), String> {
+    let sender_name = pending_tx.sender.clone();
+    let receiver_name = pending_tx.receiver.clone();
+    let amount = pending_tx.amount;
+    let transaction_id = pending_tx.id.clone();
+    let signature = pending_tx.signature.clone();
+    let timestamp = pending_tx.timestamp;
+
+    // Update sender and receiver balances and local DAGs
+    {
+        let mut pool = user_pool.lock().unwrap();
+
+        // Verify sender's balance again
+        let sender = pool.get_user_mut(&sender_name).ok_or("Sender does not exist")?;
+        if sender.wallet.balance < amount {
+            return Err("Error: Insufficient balance".to_string());
+        }
+
+        // Verify the signature
+        let message = format!(
+            "{}:{}:{}:{}:{}",
+            transaction_id, sender_name, receiver_name, amount, timestamp
+        );
+        if let Err(e) = KeyPairWrapper::verify(
+            &sender.public_key,
+            message.as_bytes(),
+            &signature,
+        ) {
+            return Err(format!("Error: Signature verification failed: {:?}", e));
+        }
+
+        // Update sender's balance
+        sender.wallet.balance -= amount;
+
+        // Add transaction to sender's local DAG
+        sender.local_dag.add_transaction(
+            transaction_id.clone(),
+            sender_name.clone(),
+            receiver_name.clone(),
+            amount,
+            signature.clone(),
+            timestamp,
+        )?;
+
+        // Update receiver's balance
+        let receiver = pool.get_user_mut(&receiver_name).ok_or("Receiver does not exist")?;
+        receiver.wallet.balance += amount;
+
+        // Add transaction to receiver's local DAG
+        receiver.local_dag.add_transaction(
+            transaction_id.clone(),
+            sender_name.clone(),
+            receiver_name.clone(),
+            amount,
+            signature.clone(),
+            timestamp,
+        )?;
+
+        // Save the updated UserPool state
+        if let Err(e) = save_user_pool_state(&pool) {
+            eprintln!("Failed to save UserPool state: {}", e);
+        }
+    } // Release the lock on user_pool
+
+    // Add transaction to global DAG
+    let dag_transaction = BlockTransaction::new(
+        transaction_id.clone(),
+        sender_name.clone(),
+        receiver_name.clone(),
+        amount,
+        signature,
+        timestamp,
+    );
+
+    {
+        let mut dag = dag.lock().unwrap();
+        dag.add_transactions(vec![dag_transaction])?;
+        // Save the updated DAG state
+        if let Err(e) = save_dag_state(&dag) {
+            eprintln!("Failed to save DAG state: {}", e);
+        }
+    }
+
+    // Log the transaction
+    {
+        let pool = user_pool.lock().unwrap();
+        let sender_balance = pool.get_user(&sender_name).unwrap().wallet.balance;
+        let receiver_balance = pool.get_user(&receiver_name).unwrap().wallet.balance;
+
+        println!(
+            "{} sent {} tokens to {}. New balances -> {}: {}, {}: {}",
+            sender_name,
+            amount,
+            receiver_name,
+            sender_name,
+            sender_balance,
+            receiver_name,
+            receiver_balance
+        );
+    }
+
+    Ok(())
+}
