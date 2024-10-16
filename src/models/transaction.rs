@@ -1,9 +1,12 @@
+// transaction.rs
+
 use crate::DAGs::transaction_dag::{DAG, BlockTransaction}; // Import the DAG and Transaction
 use crate::models::user::{UserPool};
 use crate::models::pki::KeyPairWrapper;
-use std::sync::{Arc, Mutex};
-use std::io::Write;
-use std::net::TcpStream;
+use std::sync::{Arc};
+use tokio::sync::Mutex;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use crate::models::persistence::{save_user_pool_state, save_dag_state};
@@ -19,7 +22,7 @@ pub struct PendingTransaction {
     pub timestamp: u64,
 }
 
-pub fn process_transactions(
+pub async fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
     user_pool: Arc<Mutex<UserPool>>,
     _dag: Arc<Mutex<DAG>>, // DAG will be updated upon confirmation
@@ -27,35 +30,35 @@ pub fn process_transactions(
 ) {
     for (tx_type, sender_name, receiver_name, amount) in transactions_data {
         if tx_type != "TOKEN" {
-            let _ = stream.write(
+            let _ = stream.write_all(
                 format!(
                     "Error: Transaction type {} is not specified as of now\n",
                     tx_type
                 )
                 .as_bytes(),
-            );
+            ).await;
             continue;
         }
 
         // Acquire a lock on the user pool to check if users exist and get necessary data
         {
-            let pool = user_pool.lock().unwrap();
+            let pool = user_pool.lock().await;
             if !pool.user_exists(&sender_name) || !pool.user_exists(&receiver_name) {
-                let _ = stream.write(
+                let _ = stream.write_all(
                     format!(
                         "Error: User {} or {} does not exist\n",
                         sender_name, receiver_name
                     )
                     .as_bytes(),
-                );
+                ).await;
                 continue;
             }
             let sender = pool.get_user(&sender_name).unwrap();
 
             if sender.wallet.balance < amount {
-                let _ = stream.write(
+                let _ = stream.write_all(
                     format!("Error: Insufficient balance for user {}\n", sender_name).as_bytes(),
-                );
+                ).await;
                 continue;
             }
         } // Release the lock on user_pool
@@ -77,19 +80,19 @@ pub fn process_transactions(
 
         // Sign the message using the sender's private key
         let signature = {
-            let pool = user_pool.lock().unwrap();
+            let pool = user_pool.lock().await;
             let sender = pool.get_user(&sender_name).unwrap();
 
             match sender.key_pair_wrapper.sign(message.as_bytes()) {
                 Ok(sig) => sig.as_ref().to_vec(),
                 Err(e) => {
-                    let _ = stream.write(
+                    let _ = stream.write_all(
                         format!(
                             "Error: Failed to sign transaction for user {}: {}\n",
                             sender_name, e
                         )
                         .as_bytes(),
-                    );
+                    ).await;
                     continue;
                 }
             }
@@ -97,7 +100,7 @@ pub fn process_transactions(
 
         // Create a pending transaction
         {
-            let mut pool = user_pool.lock().unwrap();
+            let mut pool = user_pool.lock().await;
             let pending_tx = PendingTransaction {
                 id: transaction_id.clone(),
                 sender: sender_name.clone(),
@@ -111,13 +114,13 @@ pub fn process_transactions(
             pool.pending_transactions.insert(transaction_id.clone(), pending_tx);
 
             // Inform the sender
-            let _ = stream.write(
+            let _ = stream.write_all(
                 format!(
                     "Transaction {} is pending confirmation from {}\n",
                     transaction_id, receiver_name
                 )
                 .as_bytes(),
-            );
+            ).await;
 
             // Save the updated UserPool state
             if let Err(e) = save_user_pool_state(&pool) {
@@ -129,7 +132,7 @@ pub fn process_transactions(
     }
 }
 
-pub fn finalize_transaction(
+pub async fn finalize_transaction(
     pending_tx: PendingTransaction,
     user_pool: Arc<Mutex<UserPool>>,
     dag: Arc<Mutex<DAG>>,
@@ -143,7 +146,7 @@ pub fn finalize_transaction(
 
     // Update sender and receiver balances and local DAGs
     {
-        let mut pool = user_pool.lock().unwrap();
+        let mut pool = user_pool.lock().await;
 
         // Verify sender's balance again
         let sender = pool.get_user_mut(&sender_name).ok_or("Sender does not exist")?;
@@ -208,8 +211,8 @@ pub fn finalize_transaction(
     );
 
     {
-        let mut dag = dag.lock().unwrap();
-        dag.add_transactions(vec![dag_transaction])?;
+        let mut dag = dag.lock().await;
+        dag.add_transactions(vec![dag_transaction]).await?;
         // Save the updated DAG state
         if let Err(e) = save_dag_state(&dag) {
             eprintln!("Failed to save DAG state: {}", e);
@@ -218,7 +221,7 @@ pub fn finalize_transaction(
 
     // Log the transaction
     {
-        let pool = user_pool.lock().unwrap();
+        let pool = user_pool.lock().await;
         let sender_balance = pool.get_user(&sender_name).unwrap().wallet.balance;
         let receiver_balance = pool.get_user(&receiver_name).unwrap().wallet.balance;
 

@@ -1,8 +1,13 @@
+// transaction_dag.rs
+
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use tokio::sync::Mutex;
 use crate::models::user::UserPool;
 use crate::models::pki::KeyPairWrapper;
 use serde::{Serialize, Deserialize};
+use futures::executor::block_on;
+
 
 /// Represents a transaction to be included in a block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +39,6 @@ impl BlockTransaction {
         }
     }
 }
-
 
 /// Represents a block in the blockchain DAG.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,18 +96,17 @@ impl DAG {
     }
 
     /// Retrieves a user's public key
-    fn get_user_public_key(&self, username: &str) -> Option<Vec<u8>> {
-        let pool = self.user_pool.lock().unwrap();
+    async fn get_user_public_key(&self, username: &str) -> Option<Vec<u8>> {
+        let pool = self.user_pool.lock().await;
         pool.get_user_public_key(username)
     }
 
     /// Adds transactions to the blockchain, handling splitting logic.
-    pub fn add_transactions(&mut self, transactions: Vec<BlockTransaction>) -> Result<(), String> {
+    pub async fn add_transactions(&mut self, transactions: Vec<BlockTransaction>) -> Result<(), String> {
         if transactions.is_empty() {
             return Ok(()); // No transactions to add.
         }
 
-        // Verify signatures of all transactions
         // Verify signatures of all transactions
         for tx in &transactions {
             // Reconstruct the message, including the transaction ID
@@ -113,8 +116,8 @@ impl DAG {
             );
 
             // Retrieve the sender's public key
-            let sender_public_key = self
-                .get_user_public_key(&tx.sender)
+            // Note: Since `get_user_public_key` is async, we need to adjust accordingly.
+            let sender_public_key = futures::executor::block_on(self.get_user_public_key(&tx.sender))
                 .ok_or(format!("Sender public key not found for {}", tx.sender))?;
 
             // Verify the signature

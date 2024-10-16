@@ -1,3 +1,5 @@
+// user.rs
+
 use std::collections::HashMap;
 use crate::models::pki::KeyPairWrapper; // Import the PKI module
 use crate::models::transaction::PendingTransaction; // Import PendingTransaction

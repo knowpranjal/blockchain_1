@@ -1,7 +1,8 @@
 use std::fs::{File, self};
 use std::io::{self, Read, Write};
 use serde_json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use crate::models::user::UserPool;
 use crate::DAGs::transaction_dag::DAG;
 
