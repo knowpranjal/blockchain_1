@@ -3,8 +3,8 @@
 use crate::DAGs::transaction_dag::{DAG, BlockTransaction}; // Import the DAG and Transaction
 use crate::models::user::{UserPool};
 use crate::models::pki::KeyPairWrapper;
-use std::sync::{Arc};
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,7 +24,7 @@ pub struct PendingTransaction {
 
 pub async fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
-    user_pool: Arc<Mutex<UserPool>>,
+    user_pool: Arc<RwLock<UserPool>>,
     _dag: Arc<Mutex<DAG>>, // DAG will be updated upon confirmation
     stream: &mut TcpStream,
 ) {
@@ -40,9 +40,26 @@ pub async fn process_transactions(
             continue;
         }
 
-        // Acquire a lock on the user pool to check if users exist and get necessary data
-        {
-            let pool = user_pool.lock().await;
+        // Generate a unique transaction ID
+        let transaction_id = Uuid::new_v4().to_string();
+
+        // Generate timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Prepare the message to sign
+        let message = format!(
+            "{}:{}:{}:{}:{}",
+            transaction_id, sender_name, receiver_name, amount, timestamp
+        );
+
+        // Lock user_pool once to check users and clone necessary data
+        let (sender_key_pair, sender_balance) = {
+            let pool = user_pool.read().await;
+
+            // Check if sender and receiver exist
             if !pool.user_exists(&sender_name) || !pool.user_exists(&receiver_name) {
                 let _ = stream.write_all(
                     format!(
@@ -53,62 +70,50 @@ pub async fn process_transactions(
                 ).await;
                 continue;
             }
+
+            // Get sender's data
             let sender = pool.get_user(&sender_name).unwrap();
 
+            // Check sender's balance
             if sender.wallet.balance < amount {
                 let _ = stream.write_all(
                     format!("Error: Insufficient balance for user {}\n", sender_name).as_bytes(),
                 ).await;
                 continue;
             }
-        } // Release the lock on user_pool
 
-        // Generate a unique transaction ID
-        let transaction_id = Uuid::new_v4().to_string();
+            // Clone key pair and balance
+            (sender.key_pair_wrapper.clone(), sender.wallet.balance)
+        }; // Release lock
 
-        // Generate timestamp
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        // Create a message to sign, including the transaction ID
-        let message = format!(
-            "{}:{}:{}:{}:{}",
-            transaction_id, sender_name, receiver_name, amount, timestamp
-        );
-
-        // Sign the message using the sender's private key
-        let signature = {
-            let pool = user_pool.lock().await;
-            let sender = pool.get_user(&sender_name).unwrap();
-
-            match sender.key_pair_wrapper.sign(message.as_bytes()) {
-                Ok(sig) => sig.as_ref().to_vec(),
-                Err(e) => {
-                    let _ = stream.write_all(
-                        format!(
-                            "Error: Failed to sign transaction for user {}: {}\n",
-                            sender_name, e
-                        )
-                        .as_bytes(),
-                    ).await;
-                    continue;
-                }
+        // Sign the message outside the lock
+        let signature = match sender_key_pair.sign(message.as_bytes()) {
+            Ok(sig) => sig.as_ref().to_vec(),
+            Err(e) => {
+                let _ = stream.write_all(
+                    format!(
+                        "Error: Failed to sign transaction for user {}: {}\n",
+                        sender_name, e
+                    )
+                    .as_bytes(),
+                ).await;
+                continue;
             }
-        }; // Release the lock on user_pool
+        };
 
         // Create a pending transaction
+        let pending_tx = PendingTransaction {
+            id: transaction_id.clone(),
+            sender: sender_name.clone(),
+            receiver: receiver_name.clone(),
+            amount,
+            signature: signature.clone(),
+            timestamp,
+        };
+
+        // Lock user_pool to add the pending transaction
         {
-            let mut pool = user_pool.lock().await;
-            let pending_tx = PendingTransaction {
-                id: transaction_id.clone(),
-                sender: sender_name.clone(),
-                receiver: receiver_name.clone(),
-                amount,
-                signature: signature.clone(),
-                timestamp,
-            };
+            let mut pool = user_pool.write().await;
 
             // Add the pending transaction to the UserPool
             pool.pending_transactions.insert(transaction_id.clone(), pending_tx);
@@ -126,15 +131,13 @@ pub async fn process_transactions(
             if let Err(e) = save_user_pool_state(&pool) {
                 eprintln!("Failed to save UserPool state: {}", e);
             }
-        } // Release the lock on user_pool
-
-        // No need to update balances or DAGs here; will be done upon confirmation
+        } // Release lock
     }
 }
 
 pub async fn finalize_transaction(
     pending_tx: PendingTransaction,
-    user_pool: Arc<Mutex<UserPool>>,
+    user_pool: Arc<RwLock<UserPool>>,
     dag: Arc<Mutex<DAG>>,
 ) -> Result<(), String> {
     let sender_name = pending_tx.sender.clone();
@@ -144,27 +147,38 @@ pub async fn finalize_transaction(
     let signature = pending_tx.signature.clone();
     let timestamp = pending_tx.timestamp;
 
-    // Update sender and receiver balances and local DAGs
+    // Prepare the message for signature verification
+    let message = format!(
+        "{}:{}:{}:{}:{}",
+        transaction_id, sender_name, receiver_name, amount, timestamp
+    );
+
+    // Clone sender's public key outside the lock
+    let sender_public_key = {
+        let pool = user_pool.read().await;
+        match pool.get_user(&sender_name) {
+            Some(user) => user.public_key.clone(),
+            None => return Err("Sender does not exist".to_string()),
+        }
+    }; // Release lock
+
+    // Perform signature verification outside the lock
+    if let Err(e) = KeyPairWrapper::verify(
+        &sender_public_key,
+        message.as_bytes(),
+        &signature,
+    ) {
+        return Err(format!("Error: Signature verification failed: {:?}", e));
+    }
+
+    // Lock user_pool to update balances and local DAGs
     {
-        let mut pool = user_pool.lock().await;
+        let mut pool = user_pool.write().await;
 
         // Verify sender's balance again
         let sender = pool.get_user_mut(&sender_name).ok_or("Sender does not exist")?;
         if sender.wallet.balance < amount {
             return Err("Error: Insufficient balance".to_string());
-        }
-
-        // Verify the signature
-        let message = format!(
-            "{}:{}:{}:{}:{}",
-            transaction_id, sender_name, receiver_name, amount, timestamp
-        );
-        if let Err(e) = KeyPairWrapper::verify(
-            &sender.public_key,
-            message.as_bytes(),
-            &signature,
-        ) {
-            return Err(format!("Error: Signature verification failed: {:?}", e));
         }
 
         // Update sender's balance
@@ -198,7 +212,7 @@ pub async fn finalize_transaction(
         if let Err(e) = save_user_pool_state(&pool) {
             eprintln!("Failed to save UserPool state: {}", e);
         }
-    } // Release the lock on user_pool
+    } // Release lock
 
     // Add transaction to global DAG
     let dag_transaction = BlockTransaction::new(
@@ -221,7 +235,7 @@ pub async fn finalize_transaction(
 
     // Log the transaction
     {
-        let pool = user_pool.lock().await;
+        let pool = user_pool.read().await;
         let sender_balance = pool.get_user(&sender_name).unwrap().wallet.balance;
         let receiver_balance = pool.get_user(&receiver_name).unwrap().wallet.balance;
 

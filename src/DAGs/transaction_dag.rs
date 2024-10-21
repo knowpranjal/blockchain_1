@@ -1,28 +1,26 @@
 // transaction_dag.rs
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc};
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use crate::models::user::UserPool;
 use crate::models::pki::KeyPairWrapper;
 use serde::{Serialize, Deserialize};
-use futures::executor::block_on;
-
 
 /// Represents a transaction to be included in a block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockTransaction {
-    pub id: String, // Change from u64 to String
+    pub id: String,
     pub sender: String,
     pub receiver: String,
     pub amount: u64,
-    pub signature: Vec<u8>, // Signature
-    pub timestamp: u64,     // Timestamp
+    pub signature: Vec<u8>,
+    pub timestamp: u64,
 }
 
 impl BlockTransaction {
     pub fn new(
-        id: String, // Use the provided transaction ID
+        id: String,
         sender: String,
         receiver: String,
         amount: u64,
@@ -53,16 +51,16 @@ pub struct Block {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = ""))]
 pub struct DAG {
-    pub blocks: HashMap<String, Block>, // Stores all blocks by their ID.
-    pub tips: HashSet<String>,          // Blocks without children (the tips of the DAG).
-    pub current_height: u64,            // Current height of the blockchain.
+    pub blocks: HashMap<String, Block>,
+    pub tips: HashSet<String>,
+    pub current_height: u64,
     #[serde(skip_serializing, skip_deserializing)]
-    pub user_pool: Arc<Mutex<UserPool>>, // Reference to the user pool
+    pub user_pool: Arc<RwLock<UserPool>>,
 }
 
 impl DAG {
     /// Initializes a new blockchain with a genesis block.
-    pub fn new(user_pool: Arc<Mutex<UserPool>>) -> Self {
+    pub fn new(user_pool: Arc<RwLock<UserPool>>) -> Self {
         let genesis_block = Block {
             id: "1".to_string(),
             transactions: Vec::new(),
@@ -97,7 +95,7 @@ impl DAG {
 
     /// Retrieves a user's public key
     async fn get_user_public_key(&self, username: &str) -> Option<Vec<u8>> {
-        let pool = self.user_pool.lock().await;
+        let pool = self.user_pool.read().await;
         pool.get_user_public_key(username)
     }
 
@@ -116,8 +114,7 @@ impl DAG {
             );
 
             // Retrieve the sender's public key
-            // Note: Since `get_user_public_key` is async, we need to adjust accordingly.
-            let sender_public_key = futures::executor::block_on(self.get_user_public_key(&tx.sender))
+            let sender_public_key = self.get_user_public_key(&tx.sender).await
                 .ok_or(format!("Sender public key not found for {}", tx.sender))?;
 
             // Verify the signature

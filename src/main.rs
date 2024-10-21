@@ -12,18 +12,17 @@ use crate::models::transaction::{process_transactions, finalize_transaction, Pen
 use crate::models::pki::KeyPairWrapper;
 use crate::models::persistence::{save_user_pool_state, load_user_pool_state, save_dag_state, load_dag_state};
 
-use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use std::sync::{Arc};
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use std::str;
 
 const NODE_B_ADDRESS: &str = "192.168.0.121:8081"; // Replace with Node B's IP and port
 
 async fn handle_client(
     mut stream: TcpStream,
-    user_pool: Arc<Mutex<UserPool>>,
+    user_pool: Arc<RwLock<UserPool>>,
     dag: Arc<Mutex<DAG>>,
 ) {
     let mut buffer = [0; 4096];
@@ -43,7 +42,7 @@ async fn handle_client(
 
                 if request.starts_with("VIEW_PENDING_TRANSACTIONS") {
                     let user_name = request.replace("VIEW_PENDING_TRANSACTIONS ", "").trim().to_string();
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
                     if !pool.user_exists(&user_name) {
                         let _ = stream.write_all(b"Error: User does not exist\n").await;
                         continue;
@@ -79,7 +78,7 @@ async fn handle_client(
 
                     // Lock user_pool briefly to get and remove pending_tx
                     let pending_tx = {
-                        let mut pool = user_pool.lock().await;
+                        let mut pool = user_pool.write().await;
                         let pending_tx = match pool.pending_transactions.remove(transaction_id) {
                             Some(tx) => tx.clone(),
                             None => {
@@ -125,7 +124,7 @@ async fn handle_client(
                     }
                     let user_name = parts[1];
                     let transaction_id = parts[2];
-                    let mut pool = user_pool.lock().await;
+                    let mut pool = user_pool.write().await;
                     let pending_tx = match pool.pending_transactions.get(transaction_id) {
                         Some(tx) => tx.clone(),
                         None => {
@@ -149,7 +148,7 @@ async fn handle_client(
                     let _ = stream.flush().await;
                 } else if request.starts_with("VALIDATE_LOCAL_DAG") {
                     let user_name = request.replace("VALIDATE_LOCAL_DAG ", "").trim().to_string();
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
                     if let Some(user) = pool.get_user(&user_name) {
                         match user.validate_local_dag(&pool) {
                             Ok(_) => {
@@ -185,7 +184,7 @@ async fn handle_client(
                 } else if request.starts_with("FETCH_USER_DAGS") {
                     let user_names_str = request.replace("FETCH_USER_DAGS ", "");
                     let user_names: Vec<&str> = user_names_str.split_whitespace().collect();
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
 
                     let mut response = String::new();
 
@@ -207,7 +206,7 @@ async fn handle_client(
                     let _ = stream.flush().await;
                 } else if request.starts_with("CHECK_BALANCE") {
                     let user_name = request.replace("CHECK_BALANCE ", "").trim().to_string();
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
 
                     if let Some(user) = pool.get_user(&user_name) {
                         let balance = user.get_balance();
@@ -247,7 +246,7 @@ async fn handle_client(
                         }
                     };
 
-                    let mut pool = user_pool.lock().await;
+                    let mut pool = user_pool.write().await;
                     if pool.user_exists(&name) {
                         let _ = stream.write_all(b"Error: User already exists\n").await;
                     } else {
@@ -287,7 +286,7 @@ async fn handle_client(
                 } else if request.starts_with("PRINT_USER_DAG") {
                     println!("Command received");
                     let user_name = request.replace("PRINT_USER_DAG ", "").trim().to_string();
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
 
                     if let Some(user) = pool.get_user(&user_name) {
                         // Call the print_dag method from LocalDAG
@@ -312,7 +311,7 @@ async fn handle_client(
                     let sender_name = global_tx.sender.clone();
                     let receiver_name = global_tx.receiver.clone();
 
-                    let pool = user_pool.lock().await;
+                    let pool = user_pool.read().await;
 
                     // Retrieve the transaction from the sender's local DAG
                     let sender_tx = match pool.get_user(&sender_name)
@@ -419,9 +418,9 @@ fn parse_add_user_data(data: &str) -> (String, String) {
 async fn main() {
     // Load UserPool state
     let user_pool = if let Some(pool) = load_user_pool_state() {
-        Arc::new(Mutex::new(pool))
+        Arc::new(RwLock::new(pool))
     } else {
-        Arc::new(Mutex::new(UserPool::new()))
+        Arc::new(RwLock::new(UserPool::new()))
     };
 
     // Load DAG state

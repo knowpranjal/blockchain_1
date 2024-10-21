@@ -1,8 +1,10 @@
+// persistence.rs
+
 use std::fs::{File, self};
 use std::io::{self, Read, Write};
 use serde_json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use crate::models::user::UserPool;
 use crate::DAGs::transaction_dag::DAG;
 
@@ -30,7 +32,7 @@ pub fn save_dag_state(dag: &DAG) -> io::Result<()> {
     Ok(())
 }
 
-pub fn load_dag_state(user_pool: Arc<Mutex<UserPool>>) -> Option<DAG> {
+pub fn load_dag_state(user_pool: Arc<RwLock<UserPool>>) -> Option<DAG> {
     if let Ok(mut file) = File::open("dag_state.json") {
         let mut serialized_dag = String::new();
         file.read_to_string(&mut serialized_dag).ok()?;

@@ -52,7 +52,7 @@ impl User {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserPool {
-    users: HashMap<String, User>,
+    pub users: HashMap<String, User>,
     pub pending_transactions: HashMap<String, PendingTransaction>,
 }
 
