@@ -1,12 +1,10 @@
-// transaction.rs
+// src/models/transaction.rs
 
-use crate::DAGs::transaction_dag::{DAG, BlockTransaction}; // Import the DAG and Transaction
-use crate::models::user::{UserPool};
+use crate::DAGs::transaction_dag::{DAG, BlockTransaction};
+use crate::models::user::UserPool;
 use crate::models::pki::KeyPairWrapper;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use crate::models::persistence::{save_user_pool_state, save_dag_state};
@@ -25,18 +23,14 @@ pub struct PendingTransaction {
 pub async fn process_transactions(
     transactions_data: Vec<(String, String, String, u64)>,
     user_pool: Arc<RwLock<UserPool>>,
-    _dag: Arc<Mutex<DAG>>, // DAG will be updated upon confirmation
-    stream: &mut TcpStream,
+    _dag: Arc<Mutex<DAG>>,
 ) {
     for (tx_type, sender_name, receiver_name, amount) in transactions_data {
         if tx_type != "TOKEN" {
-            let _ = stream.write_all(
-                format!(
-                    "Error: Transaction type {} is not specified as of now\n",
-                    tx_type
-                )
-                .as_bytes(),
-            ).await;
+            println!(
+                "Error: Transaction type {} is not specified as of now",
+                tx_type
+            );
             continue;
         }
 
@@ -56,18 +50,15 @@ pub async fn process_transactions(
         );
 
         // Lock user_pool once to check users and clone necessary data
-        let (sender_key_pair, sender_balance) = {
+        let sender_key_pair = {
             let pool = user_pool.read().await;
 
             // Check if sender and receiver exist
             if !pool.user_exists(&sender_name) || !pool.user_exists(&receiver_name) {
-                let _ = stream.write_all(
-                    format!(
-                        "Error: User {} or {} does not exist\n",
-                        sender_name, receiver_name
-                    )
-                    .as_bytes(),
-                ).await;
+                println!(
+                    "Error: User {} or {} does not exist",
+                    sender_name, receiver_name
+                );
                 continue;
             }
 
@@ -76,27 +67,22 @@ pub async fn process_transactions(
 
             // Check sender's balance
             if sender.wallet.balance < amount {
-                let _ = stream.write_all(
-                    format!("Error: Insufficient balance for user {}\n", sender_name).as_bytes(),
-                ).await;
+                println!("Error: Insufficient balance for user {}", sender_name);
                 continue;
             }
 
-            // Clone key pair and balance
-            (sender.key_pair_wrapper.clone(), sender.wallet.balance)
+            // Clone key pair
+            sender.key_pair_wrapper.clone()
         }; // Release lock
 
         // Sign the message outside the lock
         let signature = match sender_key_pair.sign(message.as_bytes()) {
             Ok(sig) => sig.as_ref().to_vec(),
             Err(e) => {
-                let _ = stream.write_all(
-                    format!(
-                        "Error: Failed to sign transaction for user {}: {}\n",
-                        sender_name, e
-                    )
-                    .as_bytes(),
-                ).await;
+                println!(
+                    "Error: Failed to sign transaction for user {}: {}",
+                    sender_name, e
+                );
                 continue;
             }
         };
@@ -119,13 +105,10 @@ pub async fn process_transactions(
             pool.pending_transactions.insert(transaction_id.clone(), pending_tx);
 
             // Inform the sender
-            let _ = stream.write_all(
-                format!(
-                    "Transaction {} is pending confirmation from {}\n",
-                    transaction_id, receiver_name
-                )
-                .as_bytes(),
-            ).await;
+            println!(
+                "Transaction {} is pending confirmation from {}",
+                transaction_id, receiver_name
+            );
 
             // Save the updated UserPool state
             if let Err(e) = save_user_pool_state(&pool) {

@@ -1,7 +1,7 @@
 import socket
 
 def send_command(command):
-    host = '192.168.1.14'   # Ensure this matches the IP address of the device your rust node is live on
+    host = '192.168.0.121'   # Ensure this matches the IP address of the device your rust node is live on
     port = 8080  # Ensure this matches the port your node is listening on
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
